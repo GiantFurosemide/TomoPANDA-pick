@@ -1,0 +1,81 @@
+# 3D Transformer configuration
+# 3D Transformer 模型配置
+
+# Model architecture
+model:
+  type: "transformer3d"
+  
+  # Transformer settings
+  architecture:
+    in_channels: 1
+    num_classes: 2
+    patch_size: [8, 8, 8]
+    embed_dim: 768
+    depth: 12
+    num_heads: 12
+    mlp_ratio: 4.0
+    dropout: 0.1
+    attention_dropout: 0.1
+    
+  # Positional encoding
+  positional_encoding: "learned"  # learned, sinusoidal, none
+  
+  # Attention mechanism
+  attention_type: "self"  # self, cross, hybrid
+  
+  # Output head
+  output_head:
+    type: "mlp"  # mlp, conv
+    hidden_dim: 512
+    dropout: 0.1
+
+# Training specific settings
+training:
+  batch_size: 2
+  learning_rate: 0.0001
+  num_epochs: 200
+  
+  # Loss function
+  loss_function: "dice_focal"
+  dice_weight: 0.6
+  focal_weight: 0.4
+  focal_alpha: 0.25
+  focal_gamma: 2.0
+  
+  # Optimizer
+  optimizer: "adamw"
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  
+  # Learning rate scheduler
+  scheduler: "cosine"
+  scheduler_params:
+    T_max: 200
+    eta_min: 1e-6
+    warmup_epochs: 10
+    
+  # Gradient clipping
+  gradient_clip_val: 1.0
+  
+  # Data augmentation
+  augmentation:
+    rotation_prob: 0.3
+    flip_prob: 0.5
+    elastic_prob: 0.2
+    noise_prob: 0.2
+    intensity_prob: 0.3
+
+# Model specific hyperparameters
+hyperparameters:
+  # Architecture
+  embed_dim: [384, 768, 1024]
+  depth: [6, 12, 18]
+  num_heads: [6, 12, 16]
+  patch_size: [[4, 4, 4], [8, 8, 8], [16, 16, 16]]
+  
+  # Training
+  batch_size: [1, 2, 4]
+  learning_rate: [0.00005, 0.0001, 0.0005]
+  
+  # Optimizer
+  weight_decay: [0.01, 0.05, 0.1]

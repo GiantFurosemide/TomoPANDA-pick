@@ -1,0 +1,72 @@
+# 3D U-Net configuration
+# 3D U-Net 模型配置
+
+# Model architecture
+model:
+  type: "unet3d"
+  
+  # Encoder settings
+  encoder:
+    in_channels: 1
+    base_channels: 64
+    depth: 4
+    dropout: 0.1
+    
+  # Decoder settings  
+  decoder:
+    out_channels: 2
+    dropout: 0.1
+    
+  # Skip connections
+  skip_connections: true
+  
+  # Attention mechanism
+  attention: false
+  attention_type: "se"  # se, cbam, none
+
+# Training specific settings
+training:
+  batch_size: 4
+  learning_rate: 0.001
+  num_epochs: 150
+  
+  # Loss function
+  loss_function: "dice_focal"
+  dice_weight: 0.7
+  focal_weight: 0.3
+  focal_alpha: 0.25
+  focal_gamma: 2.0
+  
+  # Optimizer
+  optimizer: "adam"
+  weight_decay: 1e-4
+  betas: [0.9, 0.999]
+  
+  # Learning rate scheduler
+  scheduler: "cosine"
+  scheduler_params:
+    T_max: 150
+    eta_min: 1e-6
+    
+  # Data augmentation
+  augmentation:
+    rotation_prob: 0.5
+    flip_prob: 0.5
+    elastic_prob: 0.3
+    noise_prob: 0.2
+    intensity_prob: 0.3
+
+# Model specific hyperparameters
+hyperparameters:
+  # Architecture
+  base_channels: 64
+  depth: 4
+  dropout: 0.1
+  
+  # Training
+  batch_size: [2, 4, 8]
+  learning_rate: [0.0001, 0.001, 0.01]
+  
+  # Loss weights
+  dice_weight: [0.5, 0.7, 0.9]
+  focal_weight: [0.1, 0.3, 0.5]

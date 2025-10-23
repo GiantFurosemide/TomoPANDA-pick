@@ -1,0 +1,144 @@
+# Default configuration for TomoPANDA-pick
+# 默认配置文件
+
+# Project settings
+project:
+  name: "TomoPANDA-pick"
+  version: "0.1.0"
+  description: "3D particle picking in cryoET data"
+
+# Data settings
+data:
+  # Data paths
+  raw_data_dir: "data/raw"
+  processed_data_dir: "data/processed"
+  
+  # Data formats
+  supported_formats: ["mrc", "em", "hdf5", "nii", "nii.gz"]
+  
+  # Data splitting
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+  
+  # Data preprocessing
+  preprocessing:
+    normalize: true
+    noise_reduction: true
+    contrast_enhancement: true
+    patch_size: [64, 64, 64]
+    overlap: 0.5
+  
+  # Data augmentation
+  augmentation:
+    enabled: true
+    rotation: true
+    flip: true
+    elastic_deformation: true
+    intensity_variation: true
+    gaussian_noise: true
+
+# Model settings
+model:
+  # Default model type
+  type: "unet3d"
+  
+  # Model architecture
+  input_channels: 1
+  num_classes: 2  # background + particle
+  
+  # Training settings
+  batch_size: 4
+  learning_rate: 0.001
+  num_epochs: 100
+  
+  # Loss function
+  loss_function: "dice_focal"
+  loss_weights: [0.5, 0.5]
+  
+  # Optimizer
+  optimizer: "adam"
+  weight_decay: 1e-4
+  
+  # Learning rate scheduler
+  scheduler: "cosine"
+  scheduler_params:
+    T_max: 100
+    eta_min: 1e-6
+
+# Training settings
+training:
+  # Device settings
+  device: "auto"  # auto, cpu, cuda, mps
+  num_workers: 4
+  pin_memory: true
+  
+  # Training parameters
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+  
+  # Validation
+  val_check_interval: 1.0
+  val_check_interval_unit: "epoch"
+  
+  # Checkpointing
+  save_top_k: 3
+  monitor: "val_dice"
+  mode: "max"
+  
+  # Early stopping
+  early_stopping:
+    enabled: true
+    monitor: "val_loss"
+    patience: 10
+    mode: "min"
+
+# Experiment tracking
+experiment:
+  # Weights & Biases
+  wandb:
+    enabled: true
+    project: "tomopanda-pick"
+    entity: null  # Set your wandb entity/team
+    tags: ["cryoet", "3d", "particle-picking"]
+  
+  # TensorBoard
+  tensorboard:
+    enabled: true
+    log_dir: "experiments/results/logs"
+  
+  # MLflow
+  mlflow:
+    enabled: false
+    tracking_uri: "file:experiments/results/mlflow"
+
+# Inference settings
+inference:
+  # Batch processing
+  batch_size: 1
+  overlap: 0.5
+  
+  # Post-processing
+  postprocessing:
+    nms_threshold: 0.5
+    min_particle_size: 10
+    max_particle_size: 1000
+  
+  # Output settings
+  output_format: "json"  # json, csv, hdf5
+  save_probability_maps: false
+
+# Logging settings
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "experiments/results/logs/training.log"
+  
+# Paths
+paths:
+  data_dir: "data"
+  experiments_dir: "experiments"
+  results_dir: "experiments/results"
+  checkpoints_dir: "experiments/results/checkpoints"
+  logs_dir: "experiments/results/logs"
+  visualizations_dir: "experiments/results/visualizations"
