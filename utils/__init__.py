@@ -9,11 +9,13 @@ from .io_mrc import (
     HDF5VolumeDataset,
     create_sample_mrc_files
 )
+from .io_dynamo import create_dynamo_table
 
 __all__ = [
     'convert_mrcs_to_hdf5',
     'HDF5VolumeDataset', 
-    'create_sample_mrc_files'
+    'create_sample_mrc_files',
+    'create_dynamo_table'
 ]
 
 __version__ = '0.1.0'
