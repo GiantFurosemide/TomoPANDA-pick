@@ -150,8 +150,30 @@ def create_dynamo_table(
         col_names.append(COLUMNS_NAME.get(i, f'col{i}'))
     df = pd.DataFrame(T, columns=col_names)
 
-    # Write ASCII .tbl without header
-    np.savetxt(output_file, T, fmt='%.6f')
+    # Write ASCII .tbl without header using Dynamo-like formatting
+    # Integer-like columns are written as integers; others as compact floats
+    def _write_dynamo_tbl(table_array, path):
+        # 1-based integer columns per Dynamo convention
+        int_cols_1_based = {1, 2, 3, 13, 20, 21, 22, 23, 31, 32, 34, 35}
+        int_cols_0_based = {idx - 1 for idx in int_cols_1_based}
+
+        directory = os.path.dirname(path)
+        if directory and not os.path.exists(directory):
+            os.makedirs(directory, exist_ok=True)
+
+        with open(path, 'w') as fh:
+            for row in table_array:
+                parts = []
+                for j, value in enumerate(row):
+                    if j in int_cols_0_based:
+                        parts.append(str(int(round(value))))
+                    else:
+                        # Use general format to avoid trailing zeros while
+                        # keeping reasonable precision similar to template
+                        parts.append(format(float(value), '.6g'))
+                fh.write(' '.join(parts) + '\n')
+
+    _write_dynamo_tbl(T, output_file)
 
     return df
 
@@ -205,9 +227,47 @@ def read_dynamo_tbl(tbl_path, vll_path=None):
     pandas.DataFrame
         DataFrame with named columns up to those present in the file.
     """
-    data = np.loadtxt(tbl_path)
-    if data.ndim == 1:
-        data = data.reshape(1, -1)
+    # Dynamo tables may contain complex-like tokens such as '0+1.2074e-06i'.
+    # We parse line-by-line and convert any such tokens to their real part.
+    rows = []
+    max_cols = 0
+    with open(tbl_path, 'r') as fh:
+        for raw_line in fh:
+            line = raw_line.strip()
+            if not line:
+                continue
+            tokens = line.split()
+            parsed = []
+            for tok in tokens:
+                s = tok.replace('I', 'i')
+                if 'i' in s or 'j' in s:
+                    # Convert Dynamo-style imaginary to Python complex and take real part
+                    s_complex = s.replace('i', 'j')
+                    try:
+                        parsed.append(float(complex(s_complex).real))
+                    except Exception:
+                        # Fallback: strip at '+' and keep the left real part
+                        left = s.split('+', 1)[0]
+                        try:
+                            parsed.append(float(left))
+                        except Exception:
+                            parsed.append(np.nan)
+                else:
+                    try:
+                        parsed.append(float(s))
+                    except Exception:
+                        parsed.append(np.nan)
+            rows.append(parsed)
+            if len(parsed) > max_cols:
+                max_cols = len(parsed)
+
+    # Normalize row lengths by padding with NaN if necessary
+    normalized = []
+    for r in rows:
+        if len(r) < max_cols:
+            r = r + [np.nan] * (max_cols - len(r))
+        normalized.append(r)
+    data = np.asarray(normalized, dtype=float)
     ncols = data.shape[1]
     # Build column names using COLUMNS_NAME, fallback to col{i}
     col_names = [COLUMNS_NAME.get(i, f'col{i}') for i in range(1, ncols + 1)]
@@ -262,8 +322,10 @@ def dynamo_df_to_relion(df, bin_scalar=8.0):
 
     # Micrograph name
     if 'rlnMicrographName' in df.columns:
+        print("Using rlnMicrographName column")
         names = df['rlnMicrographName'].astype(str)
     elif 'tomo' in df.columns:
+        print("Using tomo column")
         names = df['tomo'].astype(int).astype(str)
     else:
         # As a fallback, fill with '1'
