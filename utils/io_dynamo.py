@@ -338,6 +338,9 @@ def dynamo_df_to_relion(df, bin_scalar=8.0):
         'rlnAngleRot': angles_zyz[:, 0],
         'rlnAngleTilt': angles_zyz[:, 1],
         'rlnAnglePsi': angles_zyz[:, 2],
+        'rlnOriginXAngst':0.0,
+        'rlnOriginYAngst':0.0,
+        'rlnOriginZAngst':0.0,
         'rlnMicrographName': names.values
     })
     return out
