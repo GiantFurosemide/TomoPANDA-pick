@@ -2,6 +2,7 @@ import os
 import numpy as np
 import pandas as pd
 from scipy.spatial.transform import Rotation as R
+import starfile
 
 COLUMNS_NAME = {
         1: 'tag', 2: 'aligned', 3: 'averaged',
@@ -68,6 +69,7 @@ def create_dynamo_table(
     angles_zyz : array-like or None, optional
         Shape (N, 3) with ZYZ Euler angles in degrees: (rotZ, tiltY, psiZ).
         If None, initialized to zeros.
+        Convert ZYZ (RELION) -> ZXZ (Dynamo) using reusable converter
     micrograph_names : list[str] or None, optional
         List of tomogram/micrograph names per particle (length N). If None,
         all particles are assigned to tomo id 1. Names are mapped to integer
@@ -344,4 +346,106 @@ def dynamo_df_to_relion(df, bin_scalar=8.0):
         'rlnMicrographName': names.values
     })
     return out
+
+
+def relion_star_to_dynamo_tbl(star_path, pixel_size, output_file='particles.tbl'):
+    """
+    Read a RELION particle STAR file and convert it to a Dynamo .tbl file.
+
+    Extracts coordinates (rlnCenteredCoordinateXAngst, etc.), converts from
+    Angstrom to pixels using pixel_size, extracts Euler angles (rlnAngleRot,
+    rlnAngleTilt, rlnAnglePsi) in ZYZ convention, and saves as Dynamo format.
+
+    Parameters
+    ----------
+    star_path : str
+        Path to RELION particle STAR file.
+    pixel_size : float
+        Pixel size in Angstrom. Coordinates in Angstrom will be divided by
+        this value to convert to pixels.
+    output_file : str, optional
+        Path to output Dynamo .tbl file. Defaults to 'particles.tbl'.
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame containing the constructed Dynamo table with named columns.
+        The .tbl file is also written to disk.
+
+    Examples
+    --------
+    >>> df = relion_star_to_dynamo_tbl('particles.star', pixel_size=1.32, output_file='output.tbl')
+    """
+    # Read RELION star file
+    # starfile.read may return a DataFrame or a dict with multiple blocks
+    star_data = starfile.read(star_path, always_dict=False)
+    
+    # Handle both DataFrame and dict cases
+    if isinstance(star_data, dict):
+        # If dict, look for particles block (usually first loop block)
+        # Common keys: 'particles', 'optics', etc.
+        if 'particles' in star_data:
+            df = star_data['particles']
+        elif len(star_data) > 0:
+            # Get first DataFrame value
+            df_candidates = [v for v in star_data.values() if isinstance(v, pd.DataFrame)]
+            if len(df_candidates) > 0:
+                df = df_candidates[0]
+            else:
+                raise ValueError(f"Could not find DataFrame in STAR file dict: {star_path}")
+        else:
+            raise ValueError(f"Could not find particle data block in STAR file: {star_path}")
+    elif isinstance(star_data, pd.DataFrame):
+        df = star_data
+    else:
+        raise ValueError(f"Unexpected data type from starfile.read: {type(star_data)}")
+
+    # Required column names
+    coord_x_col = 'rlnCenteredCoordinateXAngst'
+    coord_y_col = 'rlnCenteredCoordinateYAngst'
+    coord_z_col = 'rlnCenteredCoordinateZAngst'
+    angle_rot_col = 'rlnAngleRot'
+    angle_tilt_col = 'rlnAngleTilt'
+    angle_psi_col = 'rlnAnglePsi'
+    
+    # Check if required columns exist
+    missing_cols = []
+    for col in [coord_x_col, coord_y_col, coord_z_col, angle_rot_col, angle_tilt_col, angle_psi_col]:
+        if col not in df.columns:
+            missing_cols.append(col)
+    
+    if missing_cols:
+        raise ValueError(f"Missing required columns in STAR file: {missing_cols}")
+    
+    # Extract coordinates (in Angstrom) and convert to pixels
+    coords_angstrom = np.stack([
+        df[coord_x_col].values,
+        df[coord_y_col].values,
+        df[coord_z_col].values
+    ], axis=1)
+    
+    # Convert from Angstrom to pixels
+    coords_pixels = coords_angstrom / float(pixel_size)
+    
+    # Extract angles (already in ZYZ convention for RELION)
+    angles_zyz = np.stack([
+        df[angle_rot_col].values,
+        df[angle_tilt_col].values,
+        df[angle_psi_col].values
+    ], axis=1)
+    
+    # Extract micrograph names if available
+    micrograph_names = None
+    if 'rlnMicrographName' in df.columns:
+        micrograph_names = df['rlnMicrographName'].astype(str).tolist()
+    
+    # Create Dynamo table
+    dynamo_df = create_dynamo_table(
+        coordinates=coords_pixels,
+        angles_zyz=angles_zyz,
+        micrograph_names=micrograph_names,
+        output_file=output_file
+    )
+    
+    return dynamo_df
 
