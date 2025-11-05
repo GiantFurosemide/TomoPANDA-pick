@@ -184,8 +184,9 @@ def create_dynamo_table(
 def read_vll_to_df(vll_path):
     """
     Read a VLL file where each line is a path to an MRC file and
-    return a DataFrame with a single column 'rlnMicrographName',
-    containing the basename without extension.
+    return a DataFrame with two columns:
+      - 'rlnMicrographName': the basename without extension
+      - 'tomo_path': the original (stripped) line
 
     Parameters
     ----------
@@ -195,9 +196,10 @@ def read_vll_to_df(vll_path):
     Returns
     -------
     pandas.DataFrame
-        DataFrame with column 'rlnMicrographName'.
+        DataFrame with columns 'rlnMicrographName' and 'tomo_path'.
     """
     names = []
+    tomo_paths = []
     with open(vll_path, 'r') as f:
         for line in f:
             p = line.strip()
@@ -206,7 +208,8 @@ def read_vll_to_df(vll_path):
             base = os.path.basename(p)
             noext, _ = os.path.splitext(base)
             names.append(noext)
-    return pd.DataFrame({'rlnMicrographName': names})
+            tomo_paths.append(p)
+    return pd.DataFrame({'rlnMicrographName': names, 'tomo_path': tomo_paths})
 
 
 def read_dynamo_tbl(tbl_path, vll_path=None):
@@ -289,14 +292,22 @@ def read_dynamo_tbl(tbl_path, vll_path=None):
     return df
 
 
-def dynamo_df_to_relion(df, bin_scalar=8.0):
+def dynamo_df_to_relion(df, bin_scalar=8.0, pixel_size=None, tomogram_size=None, output_centered=True):
     """
-    Transform a DataFrame from read_dynamo_tbl into a RELION-like DataFrame
-    with keys: 'rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ',
-    'rlnAngleRot', 'rlnAngleTilt', 'rlnAnglePsi', 'rlnMicrographName'.
-
-    Coordinates are multiplied by bin_scalar. Angles are converted from
-    Dynamo ZXZ (tdrot, tilt, narot) to RELION ZYZ (rot, tilt, psi).
+    Transform a DataFrame from read_dynamo_tbl into a RELION-like DataFrame.
+    
+    IMPORTANT COORDINATE SYSTEM NOTES:
+    - Dynamo's x/y/z (columns 24-26) are ABSOLUTE coordinates from the origin,
+      in pixel units (typically binned).
+    - RELION's rlnCenteredCoordinateXAngst/Y/Z are coordinates RELATIVE TO THE
+      TOMOGRAM CENTER, in Angstrom units.
+    
+    If output_centered=True (default), conversion process:
+    1. Get absolute coordinates from Dynamo table (multiply by bin_scalar if needed)
+    2. Convert to centered coordinates: centered = absolute - (tomogram_size / 2)
+    3. Convert to Angstrom: centered_angstrom = centered_pixels * pixel_size
+    
+    If output_centered=False, outputs rlnCoordinateX/Y/Z (absolute coordinates in pixels).
 
     Parameters
     ----------
@@ -304,16 +315,69 @@ def dynamo_df_to_relion(df, bin_scalar=8.0):
         Input DataFrame produced by read_dynamo_tbl.
     bin_scalar : float
         Scalar to multiply coordinates. Default is 8.0 for 8x8x8 binning.
+        This converts binned coordinates to unbinned pixel coordinates.
+    pixel_size : float or None, optional
+        Pixel size in Angstrom. Required if output_centered=True.
+        Used to convert pixel coordinates to Angstrom.
+    tomogram_size : tuple or array-like of shape (3,) or None, optional
+        Tomogram dimensions as (size_x, size_y, size_z) in UNBINNED pixels.
+        Required if output_centered=True. This should be the size AFTER applying bin_scalar.
+    output_centered : bool, optional
+        If True (default), output rlnCenteredCoordinateXAngst/Y/Z (relative to center, in Angstrom).
+        If False, output rlnCoordinateX/Y/Z (absolute, in pixels).
 
     Returns
     -------
     pandas.DataFrame
-        RELION-style DataFrame suitable for passing to io_starfile.create_relion_particles.
+        RELION-style DataFrame with coordinates and angles.
     """
-    # Coordinates
-    x = (df['x'] if 'x' in df.columns else df[COLUMNS_NAME.get(24, 'x')]) * float(bin_scalar)
-    y = (df['y'] if 'y' in df.columns else df[COLUMNS_NAME.get(25, 'y')]) * float(bin_scalar)
-    z = (df['z'] if 'z' in df.columns else df[COLUMNS_NAME.get(26, 'z')]) * float(bin_scalar)
+    # Get absolute coordinates from Dynamo table (in binned pixels)
+    x_binned = df['x'] if 'x' in df.columns else df[COLUMNS_NAME.get(24, 'x')]
+    y_binned = df['y'] if 'y' in df.columns else df[COLUMNS_NAME.get(25, 'y')]
+    z_binned = df['z'] if 'z' in df.columns else df[COLUMNS_NAME.get(26, 'z')]
+    
+    # Convert to unbinned pixel coordinates
+    x_unbinned = x_binned * float(bin_scalar)
+    y_unbinned = y_binned * float(bin_scalar)
+    z_unbinned = z_binned * float(bin_scalar)
+    
+    # Convert to centered coordinates if requested
+    if output_centered:
+        if pixel_size is None:
+            raise ValueError("pixel_size is required when output_centered=True")
+        if tomogram_size is None:
+            raise ValueError("tomogram_size is required when output_centered=True")
+        
+        tomogram_size = np.asarray(tomogram_size, dtype=float)
+        if tomogram_size.shape != (3,):
+            raise ValueError(f"tomogram_size must be shape (3,), got {tomogram_size.shape}")
+        
+        # Calculate tomogram center
+        tomogram_center = tomogram_size / 2.0
+        
+        # Convert absolute to centered coordinates
+        x_centered_pixels = x_unbinned.values - tomogram_center[0]
+        y_centered_pixels = y_unbinned.values - tomogram_center[1]
+        z_centered_pixels = z_unbinned.values - tomogram_center[2]
+        
+        # Convert to Angstrom
+        x_angstrom = x_centered_pixels * float(pixel_size)
+        y_angstrom = y_centered_pixels * float(pixel_size)
+        z_angstrom = z_centered_pixels * float(pixel_size)
+        
+        coord_x_col = 'rlnCenteredCoordinateXAngst'
+        coord_y_col = 'rlnCenteredCoordinateYAngst'
+        coord_z_col = 'rlnCenteredCoordinateZAngst'
+        x_out = x_angstrom
+        y_out = y_angstrom
+        z_out = z_angstrom
+    else:
+        coord_x_col = 'rlnCoordinateX'
+        coord_y_col = 'rlnCoordinateY'
+        coord_z_col = 'rlnCoordinateZ'
+        x_out = x_unbinned.values
+        y_out = y_unbinned.values
+        z_out = z_unbinned.values
 
     # Angles ZXZ -> ZYZ
     tdrot = df['tdrot'] if 'tdrot' in df.columns else df[COLUMNS_NAME.get(7, 'tdrot')]
@@ -334,27 +398,37 @@ def dynamo_df_to_relion(df, bin_scalar=8.0):
         names = pd.Series(['1'] * len(df))
 
     out = pd.DataFrame({
-        'rlnCoordinateX': x.values,
-        'rlnCoordinateY': y.values,
-        'rlnCoordinateZ': z.values,
+        coord_x_col: x_out,
+        coord_y_col: y_out,
+        coord_z_col: z_out,
         'rlnAngleRot': angles_zyz[:, 0],
         'rlnAngleTilt': angles_zyz[:, 1],
         'rlnAnglePsi': angles_zyz[:, 2],
-        'rlnOriginXAngst':0.0,
-        'rlnOriginYAngst':0.0,
-        'rlnOriginZAngst':0.0,
+        'rlnOriginXAngst': 0.0,
+        'rlnOriginYAngst': 0.0,
+        'rlnOriginZAngst': 0.0,
         'rlnMicrographName': names.values
     })
     return out
 
 
-def relion_star_to_dynamo_tbl(star_path, pixel_size, output_file='particles.tbl'):
+def relion_star_to_dynamo_tbl(star_path, pixel_size, tomogram_size=None, output_file='particles.tbl'):
     """
     Read a RELION particle STAR file and convert it to a Dynamo .tbl file.
 
-    Extracts coordinates (rlnCenteredCoordinateXAngst, etc.), converts from
-    Angstrom to pixels using pixel_size, extracts Euler angles (rlnAngleRot,
-    rlnAngleTilt, rlnAnglePsi) in ZYZ convention, and saves as Dynamo format.
+    IMPORTANT COORDINATE SYSTEM NOTES:
+    - RELION's rlnCenteredCoordinateXAngst/Y/Z are coordinates RELATIVE TO THE
+      TOMOGRAM CENTER, in Angstrom units.
+    - Dynamo's x/y/z (columns 24-26) are ABSOLUTE coordinates from the origin
+      (typically top-left corner), in pixel units.
+    
+    Conversion process:
+    1. Convert CenteredCoordinate from Angstrom to pixels (divide by pixel_size)
+    2. Add tomogram center offset to get absolute coordinates:
+       absolute_coord = centered_coord_pixels + (tomogram_size / 2)
+    
+    If tomogram_size is not provided, the function assumes coordinates are already
+    absolute (which may be incorrect if using CenteredCoordinate fields).
 
     Parameters
     ----------
@@ -363,6 +437,10 @@ def relion_star_to_dynamo_tbl(star_path, pixel_size, output_file='particles.tbl'
     pixel_size : float
         Pixel size in Angstrom. Coordinates in Angstrom will be divided by
         this value to convert to pixels.
+    tomogram_size : tuple or array-like of shape (3,) or None, optional
+        Tomogram dimensions as (size_x, size_y, size_z) in pixels.
+        If None, conversion assumes coordinates are already absolute (not recommended).
+        If provided, coordinates will be converted from centered to absolute.
     output_file : str, optional
         Path to output Dynamo .tbl file. Defaults to 'particles.tbl'.
 
@@ -374,31 +452,45 @@ def relion_star_to_dynamo_tbl(star_path, pixel_size, output_file='particles.tbl'
 
     Examples
     --------
-    >>> df = relion_star_to_dynamo_tbl('particles.star', pixel_size=1.32, output_file='output.tbl')
+    >>> # With tomogram size (recommended)
+    >>> df = relion_star_to_dynamo_tbl('particles.star', pixel_size=1.32, 
+    ...                                tomogram_size=(512, 512, 200), 
+    ...                                output_file='output.tbl')
+    >>> # Without tomogram size (assumes absolute coordinates - may be incorrect)
+    >>> df = relion_star_to_dynamo_tbl('particles.star', pixel_size=1.32, 
+    ...                                output_file='output.tbl')
     """
     # Read RELION star file
     # starfile.read may return a DataFrame or a dict with multiple blocks
     star_data = starfile.read(star_path, always_dict=False)
     
     # Handle both DataFrame and dict cases
+    particles_df = None
+    optics_df = None
+    
     if isinstance(star_data, dict):
-        # If dict, look for particles block (usually first loop block)
-        # Common keys: 'particles', 'optics', etc.
+        # If dict, look for particles and optics blocks
         if 'particles' in star_data:
-            df = star_data['particles']
+            particles_df = star_data['particles']
         elif len(star_data) > 0:
-            # Get first DataFrame value
+            # Get first DataFrame value as particles
             df_candidates = [v for v in star_data.values() if isinstance(v, pd.DataFrame)]
             if len(df_candidates) > 0:
-                df = df_candidates[0]
+                particles_df = df_candidates[0]
             else:
                 raise ValueError(f"Could not find DataFrame in STAR file dict: {star_path}")
         else:
             raise ValueError(f"Could not find particle data block in STAR file: {star_path}")
+        
+        # Try to get optics block for tomogram size
+        if 'optics' in star_data:
+            optics_df = star_data['optics']
     elif isinstance(star_data, pd.DataFrame):
-        df = star_data
+        particles_df = star_data
     else:
         raise ValueError(f"Unexpected data type from starfile.read: {type(star_data)}")
+
+    df = particles_df
 
     # Required column names
     coord_x_col = 'rlnCenteredCoordinateXAngst'
@@ -417,15 +509,54 @@ def relion_star_to_dynamo_tbl(star_path, pixel_size, output_file='particles.tbl'
     if missing_cols:
         raise ValueError(f"Missing required columns in STAR file: {missing_cols}")
     
-    # Extract coordinates (in Angstrom) and convert to pixels
-    coords_angstrom = np.stack([
+    # Extract coordinates (in Angstrom, relative to tomogram center)
+    coords_angstrom_centered = np.stack([
         df[coord_x_col].values,
         df[coord_y_col].values,
         df[coord_z_col].values
     ], axis=1)
     
-    # Convert from Angstrom to pixels
-    coords_pixels = coords_angstrom / float(pixel_size)
+    # Convert from Angstrom to pixels (still relative to center)
+    coords_pixels_centered = coords_angstrom_centered / float(pixel_size)
+    
+    # Convert from centered coordinates to absolute coordinates
+    if tomogram_size is not None:
+        tomogram_size = np.asarray(tomogram_size, dtype=float)
+        if tomogram_size.shape != (3,):
+            raise ValueError(f"tomogram_size must be shape (3,), got {tomogram_size.shape}")
+        # Calculate tomogram center
+        tomogram_center = tomogram_size / 2.0
+        # Convert to absolute coordinates: absolute = centered + center
+        coords_pixels = coords_pixels_centered + tomogram_center
+    else:
+        # Try to get tomogram size from optics block if available
+        if optics_df is not None:
+            if 'rlnImageSizeX' in optics_df.columns and 'rlnImageSizeY' in optics_df.columns and 'rlnImageSizeZ' in optics_df.columns:
+                tomogram_size = np.array([
+                    optics_df['rlnImageSizeX'].iloc[0],
+                    optics_df['rlnImageSizeY'].iloc[0],
+                    optics_df['rlnImageSizeZ'].iloc[0]
+                ])
+                tomogram_center = tomogram_size / 2.0
+                coords_pixels = coords_pixels_centered + tomogram_center
+            else:
+                import warnings
+                warnings.warn(
+                    "WARNING: tomogram_size not provided and could not be extracted from optics block. "
+                    "Assuming coordinates are already absolute. This may be INCORRECT if using "
+                    "rlnCenteredCoordinate fields. Please provide tomogram_size parameter.",
+                    UserWarning
+                )
+                coords_pixels = coords_pixels_centered
+        else:
+            import warnings
+            warnings.warn(
+                "WARNING: tomogram_size not provided. Assuming coordinates are already absolute. "
+                "This may be INCORRECT if using rlnCenteredCoordinate fields. "
+                "Please provide tomogram_size parameter.",
+                UserWarning
+            )
+            coords_pixels = coords_pixels_centered
     
     # Extract angles (already in ZYZ convention for RELION)
     angles_zyz = np.stack([
@@ -438,6 +569,10 @@ def relion_star_to_dynamo_tbl(star_path, pixel_size, output_file='particles.tbl'
     micrograph_names = None
     if 'rlnMicrographName' in df.columns:
         micrograph_names = df['rlnMicrographName'].astype(str).tolist()
+    elif 'rlnTomoName' in df.columns:
+        micrograph_names = df['rlnTomoName'].astype(str).tolist()
+    else:
+        raise ValueError(f"Could not find micrograph name column in STAR file: {star_path}")
     
     # Create Dynamo table
     dynamo_df = create_dynamo_table(
@@ -449,3 +584,42 @@ def relion_star_to_dynamo_tbl(star_path, pixel_size, output_file='particles.tbl'
     
     return dynamo_df
 
+
+def save_sorted_vll_by_tomonames(tomo_names:list, vll_df:pd.DataFrame, output_vll_path:str='sorted_tomos_bin8.vll'):
+    """
+    Reorder and save a .vll file according to the order of tomo_names using the 'tomo_path' column in vll_df.
+    Matching rule: A match is found if the basename (without extension) of an mrc path contains the tomo_name string.
+
+    Parameters
+    ----------
+    tomo_names : list
+        List of tomogram names.
+    vll_df : pd.DataFrame
+        DataFrame with 'tomo_path' column. Output from read_vll_to_df.
+    output_vll_path : str, optional
+        Path to output .vll file. Defaults to 'sorted_tomos_bin8.vll'.
+
+    """
+    import os
+    mrc_paths = vll_df['tomo_path'].tolist()
+    # Build a dictionary mapping from each basename (mrc filename without extension) to its path
+    basename_to_path = {os.path.splitext(os.path.basename(p))[0]: p for p in mrc_paths}
+
+    # For each tomo_name, find the first mrc path whose basename contains tomo_name
+    sorted_paths = []
+    for name in tomo_names:
+        found_path = None
+        for bn, p in basename_to_path.items():
+            if name in bn:
+                found_path = p
+                break
+        if found_path is None:
+            raise ValueError(f"Could not find an mrc path matching {name} (by inclusion rule)")
+        sorted_paths.append(found_path)
+
+    # Write the new vll file
+    os.makedirs(os.path.dirname(output_vll_path), exist_ok=True)
+    with open(output_vll_path, 'w') as f:
+        for p in sorted_paths:
+            f.write(p + '\n')
+    print(f"Saved vll file sorted by tomo_names to: {output_vll_path}")
