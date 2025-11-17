@@ -116,3 +116,68 @@ def create_relion_micrographs(micrograph_names, output_file='micrographs.star'):
     return df
 
 
+def create_relion3_star(
+    image_names: list,
+    angles: np.ndarray,
+    optics_group_id: int,
+    optics_group_name: str,
+    pixel_size: float,
+    voltage_kv: float,
+    cs_mm: float,
+    amplitude_contrast: float,
+    output_file: str = 'particles.star'
+) -> dict:
+    """
+    创建 RELION 3 格式的 STAR 文件，包含 optics 和 particles 两个 block。
+    
+    Parameters
+    ----------
+    image_names : list
+        图像名称列表，格式为 "slice_index@stack_path"
+    angles : np.ndarray
+        欧拉角数组，形状为 (N, 3)，列为 (Rot, Tilt, Psi)（度）
+    optics_group_id : int
+        Optics group ID
+    optics_group_name : str
+        Optics group 名称
+    pixel_size : float
+        像素大小（Angstrom）
+    voltage_kv : float
+        电压（kV）
+    cs_mm : float
+        球差（mm）
+    amplitude_contrast : float
+        振幅对比度
+    output_file : str, optional
+        输出文件路径，默认 'particles.star'
+        
+    Returns
+    -------
+    dict
+        包含 'optics' 和 'particles' DataFrame 的字典
+    """
+    # 创建 optics DataFrame
+    optics_df = pd.DataFrame({
+        'rlnOpticsGroupName': [optics_group_name],
+        'rlnOpticsGroup': [optics_group_id],
+        'rlnImagePixelSize': [pixel_size],
+        'rlnVoltage': [voltage_kv],
+        'rlnSphericalAberration': [cs_mm],
+        'rlnAmplitudeContrast': [amplitude_contrast]
+    })
+    
+    # 创建 particles DataFrame
+    particles_df = pd.DataFrame({
+        'rlnImageName': image_names,
+        'rlnAngleRot': angles[:, 0],
+        'rlnAngleTilt': angles[:, 1],
+        'rlnAnglePsi': angles[:, 2],
+        'rlnOpticsGroup': [optics_group_id] * len(image_names)
+    })
+    
+    # 写入 STAR 文件（包含两个 block）
+    starfile.write({'optics': optics_df, 'particles': particles_df}, output_file)
+    
+    return {'optics': optics_df, 'particles': particles_df}
+
+
