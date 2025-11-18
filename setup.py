@@ -26,7 +26,7 @@ setup(
     long_description=read_readme(),
     long_description_content_type="text/markdown",
     url="https://github.com/your-username/TomoPANDA-pick",
-    packages=find_packages(),
+    packages=find_packages(exclude=["tests", "notebooks", "docs", "example"]),
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Science/Research",
@@ -63,16 +63,17 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "tomopanda-train=tomopanda.scripts.train:main",
-            "tomopanda-eval=tomopanda.scripts.evaluate:main",
-            "tomopanda-predict=tomopanda.scripts.predict:main",
-            "tomopanda-prepare=tomopanda.scripts.data_preparation:main",
-            "tomopanda-benchmark=tomopanda.scripts.benchmark:main",
+            "tomopanda-train=scripts.train:main",
+            # Uncomment when other scripts are created:
+            # "tomopanda-eval=scripts.evaluate:main",
+            # "tomopanda-predict=scripts.predict:main",
+            # "tomopanda-prepare=scripts.data_preparation:main",
+            # "tomopanda-benchmark=scripts.benchmark:main",
         ],
     },
     include_package_data=True,
     package_data={
-        "tomopanda": [
+        "": [
             "config/*.yaml",
             "config/model_configs/*.yaml",
         ],

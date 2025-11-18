@@ -276,10 +276,14 @@ class ModelFactory:
             from .ensemble.ensemble_model import EnsembleModel
             return EnsembleModel(in_channels=in_channels, num_classes=num_classes, **kwargs)
         
+        elif model_type.lower() in ['cnn3d', 'simplecnn3d', 'simple_cnn3d']:
+            from .cnn3d.cnn3d import SimpleCNN3D
+            return SimpleCNN3D(in_channels=in_channels, num_classes=num_classes, **kwargs)
+        
         else:
             raise ValueError(f"Unknown model type: {model_type}")
     
     @staticmethod
     def get_available_models() -> list:
         """Get list of available model types"""
-        return ['unet3d', 'resnet3d', 'transformer3d', 'ensemble']
+        return ['unet3d', 'resnet3d', 'transformer3d', 'ensemble', 'cnn3d']

@@ -28,89 +28,42 @@ def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Train TomoPANDA-pick model')
     
-    # Model arguments
-    parser.add_argument('--model', type=str, default='unet3d',
-                       choices=['unet3d', 'resnet3d', 'transformer3d', 'ensemble'],
-                       help='Model type to train')
+    # Only keep config argument - all other parameters are in YAML
     parser.add_argument('--config', type=str, default='config/default_config.yaml',
-                       help='Path to configuration file')
-    parser.add_argument('--model-config', type=str, default=None,
-                       help='Path to model-specific configuration file')
-    
-    # Data arguments
-    parser.add_argument('--data-dir', type=str, default='data',
-                       help='Path to data directory')
-    parser.add_argument('--batch-size', type=int, default=4,
-                       help='Batch size for training')
-    parser.add_argument('--num-workers', type=int, default=4,
-                       help='Number of worker processes for data loading')
-    
-    # Training arguments
-    parser.add_argument('--epochs', type=int, default=100,
-                       help='Number of training epochs')
-    parser.add_argument('--learning-rate', type=float, default=1e-3,
-                       help='Learning rate')
-    parser.add_argument('--weight-decay', type=float, default=1e-4,
-                       help='Weight decay')
-    parser.add_argument('--gpus', type=int, default=1,
-                       help='Number of GPUs to use')
-    parser.add_argument('--precision', type=int, default=32,
-                       choices=[16, 32],
-                       help='Training precision')
-    
-    # Experiment tracking
-    parser.add_argument('--experiment-name', type=str, default=None,
-                       help='Name for the experiment')
-    parser.add_argument('--wandb-project', type=str, default='tomopanda-pick',
-                       help='Weights & Biases project name')
-    parser.add_argument('--wandb-entity', type=str, default=None,
-                       help='Weights & Biases entity/team')
-    parser.add_argument('--no-wandb', action='store_true',
-                       help='Disable Weights & Biases logging')
-    
-    # Other arguments
-    parser.add_argument('--seed', type=int, default=42,
-                       help='Random seed')
-    parser.add_argument('--resume', type=str, default=None,
-                       help='Path to checkpoint to resume from')
-    parser.add_argument('--fast-dev-run', action='store_true',
-                       help='Run a quick test with a few batches')
+                       help='Path to configuration file (YAML format)')
     
     return parser.parse_args()
 
 
-def load_config(config_path: str, model_config_path: str = None) -> dict:
-    """Load configuration from YAML files"""
+def load_config(config_path: str) -> dict:
+    """Load configuration from YAML file"""
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
-    
-    if model_config_path and os.path.exists(model_config_path):
-        with open(model_config_path, 'r') as f:
-            model_config = yaml.safe_load(f)
-            config.update(model_config)
-    
     return config
 
 
-def setup_loggers(config: dict, args) -> list:
+def setup_loggers(config: dict) -> list:
     """Setup logging"""
     loggers = []
+    
+    model_type = config.get('model', {}).get('type', 'unet3d')
+    experiment_name = config.get('experiment', {}).get('name') or f"{model_type}_experiment"
     
     # TensorBoard logger
     if config.get('experiment', {}).get('tensorboard', {}).get('enabled', True):
         tb_logger = TensorBoardLogger(
             save_dir=config['paths']['logs_dir'],
-            name=args.experiment_name or f"{args.model}_experiment"
+            name=experiment_name
         )
         loggers.append(tb_logger)
     
     # Weights & Biases logger
-    if not args.no_wandb and config.get('experiment', {}).get('wandb', {}).get('enabled', True):
+    if config.get('experiment', {}).get('wandb', {}).get('enabled', True):
         wandb_config = config['experiment']['wandb']
         wandb_logger = WandbLogger(
-            project=args.wandb_project or wandb_config.get('project', 'tomopanda-pick'),
-            entity=args.wandb_entity or wandb_config.get('entity'),
-            name=args.experiment_name or f"{args.model}_experiment",
+            project=wandb_config.get('project', 'tomopanda-pick'),
+            entity=wandb_config.get('entity'),
+            name=experiment_name,
             tags=wandb_config.get('tags', ['cryoet', '3d', 'particle-picking'])
         )
         loggers.append(wandb_logger)
@@ -157,25 +110,19 @@ def main():
     """Main training function"""
     args = parse_args()
     
+    # Load configuration from YAML
+    config = load_config(args.config)
+    
     # Set random seed
-    pl.seed_everything(args.seed)
+    seed = config.get('training', {}).get('seed', 42)
+    pl.seed_everything(seed)
     
-    # Load configuration
-    config = load_config(args.config, args.model_config)
-    
-    # Override config with command line arguments
-    if args.batch_size:
-        config['model']['batch_size'] = args.batch_size
-    if args.learning_rate:
-        config['model']['learning_rate'] = args.learning_rate
-    if args.weight_decay:
-        config['model']['weight_decay'] = args.weight_decay
-    if args.epochs:
-        config['model']['num_epochs'] = args.epochs
+    # Get model type from config
+    model_type = config.get('model', {}).get('type', 'unet3d')
     
     # Create model
     model = ModelFactory.create_model(
-        model_type=args.model,
+        model_type=model_type,
         in_channels=config['model']['input_channels'],
         num_classes=config['model']['num_classes'],
         learning_rate=config['model']['learning_rate'],
@@ -183,18 +130,26 @@ def main():
         **config.get('model', {}).get('architecture', {})
     )
     
+    # Get data settings from config
+    data_config = config.get('data', {})
+    training_config = config.get('training', {})
+    subtomogram_config = data_config.get('subtomogram', {})
+    
     # Create data loaders
     dataloaders = CryoETDataLoader.create_dataloaders(
-        data_dir=args.data_dir,
+        data_dir=data_config.get('data_dir', 'data'),
         batch_size=config['model']['batch_size'],
-        num_workers=args.num_workers,
-        pin_memory=True,
+        num_workers=training_config.get('num_workers', 4),
+        pin_memory=training_config.get('pin_memory', True),
         patch_size=tuple(config['data']['preprocessing']['patch_size']),
-        overlap=config['data']['preprocessing']['overlap']
+        overlap=config['data']['preprocessing']['overlap'],
+        use_subtomograms=data_config.get('use_subtomograms', False),
+        mask_type=subtomogram_config.get('mask_type', 'full'),
+        mask_radius=subtomogram_config.get('mask_radius')
     )
     
     # Setup loggers
-    loggers = setup_loggers(config, args)
+    loggers = setup_loggers(config)
     
     # Setup callbacks
     callbacks = setup_callbacks(config)
@@ -202,16 +157,17 @@ def main():
     # Setup trainer
     trainer = pl.Trainer(
         max_epochs=config['model']['num_epochs'],
-        gpus=args.gpus,
-        precision=args.precision,
+        gpus=training_config.get('gpus', 1),
+        precision=training_config.get('precision', 32),
         loggers=loggers,
         callbacks=callbacks,
-        fast_dev_run=args.fast_dev_run,
-        resume_from_checkpoint=args.resume
+        fast_dev_run=training_config.get('fast_dev_run', False),
+        resume_from_checkpoint=training_config.get('resume_from_checkpoint')
     )
     
     # Start training
-    print(f"Starting training with {args.model} model...")
+    print(f"Starting training with {model_type} model...")
+    print(f"Configuration file: {args.config}")
     print(f"Training samples: {len(dataloaders['train'].dataset)}")
     print(f"Validation samples: {len(dataloaders['val'].dataset)}")
     print(f"Test samples: {len(dataloaders['test'].dataset)}")

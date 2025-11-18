@@ -10,11 +10,20 @@ project:
 # Data settings
 data:
   # Data paths
+  data_dir: "data"  # Main data directory
   raw_data_dir: "data/raw"
   processed_data_dir: "data/processed"
   
   # Data formats
   supported_formats: ["mrc", "em", "hdf5", "nii", "nii.gz"]
+  
+  # Data type: "full_tomogram" or "subtomogram"
+  use_subtomograms: false  # If true, each file is a pre-extracted particle
+  
+  # Subtomogram mask settings (only used if use_subtomograms=true)
+  subtomogram:
+    mask_type: "full"  # "full" or "center"
+    mask_radius: null  # null=auto (min(shape)//4), 0-1=relative (e.g., 0.25), >1=absolute pixels
   
   # Data splitting
   train_ratio: 0.7
@@ -70,12 +79,16 @@ model:
 training:
   # Device settings
   device: "auto"  # auto, cpu, cuda, mps
+  gpus: 1  # Number of GPUs (0 for CPU)
+  precision: 32  # 16 or 32 (mixed precision or full precision)
   num_workers: 4
   pin_memory: true
   
   # Training parameters
+  seed: 42  # Random seed for reproducibility
   gradient_clip_val: 1.0
   accumulate_grad_batches: 1
+  fast_dev_run: false  # Quick test run with a few batches
   
   # Validation
   val_check_interval: 1.0
@@ -85,6 +98,7 @@ training:
   save_top_k: 3
   monitor: "val_dice"
   mode: "max"
+  resume_from_checkpoint: null  # Path to checkpoint to resume from
   
   # Early stopping
   early_stopping:
@@ -95,6 +109,9 @@ training:
 
 # Experiment tracking
 experiment:
+  # Experiment name
+  name: null  # If null, will use "{model_type}_experiment"
+  
   # Weights & Biases
   wandb:
     enabled: true

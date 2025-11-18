@@ -189,6 +189,169 @@ class CryoETDataset(Dataset):
         raise IndexError(f"Index {idx} out of range")
 
 
+class SubtomogramDataset(Dataset):
+    """
+    Dataset class for pre-extracted subtomogram particles
+    用于已提取的subtomogram颗粒数据
+    """
+    
+    def __init__(
+        self,
+        data_dir: str,
+        split: str = "train",
+        transform: Optional[callable] = None,
+        target_transform: Optional[callable] = None,
+        create_mask: bool = True,
+        mask_type: str = "full",  # "full" or "center"
+        mask_radius: Optional[float] = None  # Radius for center mask (None = auto, or specify value)
+    ):
+        """
+        Initialize the subtomogram dataset
+        
+        Args:
+            data_dir: Path to the data directory
+            split: Dataset split ('train', 'val', 'test')
+            transform: Transform to apply to input data
+            target_transform: Transform to apply to target data
+            create_mask: Whether to create a mask (for segmentation tasks)
+            mask_type: Type of mask - "full" (entire volume) or "center" (center region)
+            mask_radius: Radius for center mask. If None, uses min(shape) // 4. 
+                        Can be absolute value (e.g., 10) or relative (0.0-1.0, e.g., 0.25 = 25% of min dimension)
+        """
+        self.data_dir = Path(data_dir)
+        self.split = split
+        self.transform = transform
+        self.target_transform = target_transform
+        self.create_mask = create_mask
+        self.mask_type = mask_type
+        self.mask_radius = mask_radius
+        
+        # Load data paths
+        self.data_paths = self._load_data_paths()
+        logger.info(f"Loaded {len(self.data_paths)} subtomogram particles for {split} split")
+    
+    def _load_data_paths(self) -> List[str]:
+        """Load paths to subtomogram files"""
+        data_paths = []
+        split_dir = self.data_dir / "processed" / self.split
+        
+        if not split_dir.exists():
+            logger.warning(f"Split directory {split_dir} does not exist")
+            return data_paths
+        
+        # Look for subtomogram files (each file is a particle)
+        for ext in ['.mrc', '.em', '.h5', '.hdf5', '.nii', '.nii.gz']:
+            for file_path in split_dir.glob(f"*{ext}"):
+                # Skip if it's a compressed nii.gz and we already found the .nii.gz version
+                if ext == '.nii' and file_path.with_suffix('.nii.gz').exists():
+                    continue
+                data_paths.append(str(file_path))
+        
+        # Sort for reproducibility
+        data_paths.sort()
+        return data_paths
+    
+    def _load_subtomogram(self, path: str) -> np.ndarray:
+        """Load subtomogram from file"""
+        path = Path(path)
+        
+        if path.suffix == '.mrc':
+            with mrcfile.open(path, mode='r') as mrc:
+                data = mrc.data.astype(np.float32)
+        elif path.suffix == '.em':
+            # EM file loading (simplified)
+            with open(path, 'rb') as f:
+                # This is a simplified version - real EM loading would be more complex
+                data = np.frombuffer(f.read(), dtype=np.float32)
+                # Reshape based on header info (simplified)
+                data = data.reshape((64, 64, 64))  # Placeholder
+        elif path.suffix in ['.h5', '.hdf5']:
+            with h5py.File(path, 'r') as f:
+                # Try common keys
+                if 'data' in f:
+                    data = f['data'][:].astype(np.float32)
+                elif 'subtomogram' in f:
+                    data = f['subtomogram'][:].astype(np.float32)
+                else:
+                    # Get first dataset
+                    key = list(f.keys())[0]
+                    data = f[key][:].astype(np.float32)
+        elif path.suffix in ['.nii', '.gz']:
+            try:
+                import nibabel as nib
+                img = nib.load(str(path))
+                data = img.get_fdata().astype(np.float32)
+            except ImportError:
+                raise ImportError("nibabel is required for NIfTI files. Install with: pip install nibabel")
+        else:
+            raise ValueError(f"Unsupported file format: {path.suffix}")
+        
+        return data
+    
+    def _create_mask(self, shape: Tuple[int, ...]) -> np.ndarray:
+        """Create a mask for the subtomogram"""
+        mask = np.zeros(shape, dtype=np.float32)
+        
+        if self.mask_type == "full":
+            # Full volume mask (for segmentation tasks where entire volume is particle)
+            mask.fill(1.0)
+        elif self.mask_type == "center":
+            # Center region mask (for tasks where center is particle)
+            center = tuple(s // 2 for s in shape)
+            
+            # Calculate radius
+            if self.mask_radius is None:
+                # Default: 1/4 of minimum dimension
+                radius = min(shape) // 4
+            elif 0 < self.mask_radius < 1:
+                # Relative radius (0.0-1.0): percentage of minimum dimension
+                radius = min(shape) * self.mask_radius
+            else:
+                # Absolute radius value
+                radius = self.mask_radius
+            
+            # Create spherical mask
+            coords = np.ogrid[:shape[0], :shape[1], :shape[2]]
+            dist = np.sqrt(sum((c - c0)**2 for c, c0 in zip(coords, center)))
+            mask[dist <= radius] = 1.0
+        
+        return mask
+    
+    def __len__(self) -> int:
+        """Return the number of subtomograms"""
+        return len(self.data_paths)
+    
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        """Get a subtomogram sample"""
+        if idx >= len(self.data_paths):
+            raise IndexError(f"Index {idx} out of range [0, {len(self.data_paths)})")
+        
+        # Load subtomogram
+        subtomogram = self._load_subtomogram(self.data_paths[idx])
+        
+        # Create mask if needed
+        if self.create_mask:
+            mask = self._create_mask(subtomogram.shape)
+        else:
+            mask = np.ones_like(subtomogram)
+        
+        # Convert to tensors
+        image = torch.from_numpy(subtomogram).unsqueeze(0)  # Add channel dimension
+        mask = torch.from_numpy(mask).unsqueeze(0)
+        
+        # Apply transforms
+        if self.transform:
+            image = self.transform(image)
+        if self.target_transform:
+            mask = self.target_transform(mask)
+        
+        return {
+            'image': image,
+            'mask': mask,
+            'path': self.data_paths[idx]
+        }
+
+
 class CryoETDataLoader:
     """
     Data loader factory for cryoET datasets
@@ -204,7 +367,10 @@ class CryoETDataLoader:
         overlap: float = 0.5,
         train_transform: Optional[callable] = None,
         val_transform: Optional[callable] = None,
-        target_transform: Optional[callable] = None
+        target_transform: Optional[callable] = None,
+        use_subtomograms: bool = False,
+        mask_type: str = "full",
+        mask_radius: Optional[float] = None
     ) -> Dict[str, DataLoader]:
         """
         Create data loaders for train, validation, and test sets
@@ -214,11 +380,16 @@ class CryoETDataLoader:
             batch_size: Batch size for data loaders
             num_workers: Number of worker processes
             pin_memory: Whether to pin memory
-            patch_size: Size of patches to extract
-            overlap: Overlap ratio between patches
+            patch_size: Size of patches to extract (only used if use_subtomograms=False)
+            overlap: Overlap ratio between patches (only used if use_subtomograms=False)
             train_transform: Transform for training data
             val_transform: Transform for validation data
             target_transform: Transform for target data
+            use_subtomograms: If True, use SubtomogramDataset (for pre-extracted particles)
+            mask_type: Type of mask for subtomograms ("full" or "center")
+            mask_radius: Radius for center mask. None = auto (min(shape)//4), 
+                        float 0-1 = relative (e.g., 0.25 = 25%), 
+                        float >1 = absolute pixels
             
         Returns:
             Dictionary containing train, val, and test data loaders
@@ -226,14 +397,27 @@ class CryoETDataLoader:
         dataloaders = {}
         
         for split in ['train', 'val', 'test']:
-            dataset = CryoETDataset(
-                data_dir=data_dir,
-                split=split,
-                transform=train_transform if split == 'train' else val_transform,
-                target_transform=target_transform,
-                patch_size=patch_size,
-                overlap=overlap
-            )
+            if use_subtomograms:
+                # Use subtomogram dataset (pre-extracted particles)
+                dataset = SubtomogramDataset(
+                    data_dir=data_dir,
+                    split=split,
+                    transform=train_transform if split == 'train' else val_transform,
+                    target_transform=target_transform,
+                    create_mask=True,
+                    mask_type=mask_type,
+                    mask_radius=mask_radius
+                )
+            else:
+                # Use full tomogram dataset (extract patches from full tomograms)
+                dataset = CryoETDataset(
+                    data_dir=data_dir,
+                    split=split,
+                    transform=train_transform if split == 'train' else val_transform,
+                    target_transform=target_transform,
+                    patch_size=patch_size,
+                    overlap=overlap
+                )
             
             shuffle = (split == 'train')
             dataloader = DataLoader(
