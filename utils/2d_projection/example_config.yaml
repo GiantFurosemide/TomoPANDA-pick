@@ -1,0 +1,32 @@
+input:
+  subtomo_txt: /path/to/subtomos.txt   # txt 文件，每行一个 MRC 绝对或相对路径
+
+orientations:
+  N_orientations: 10
+  psi_deg: 0.0                         # ZYZ 第三角 Psi（固定 in-plane）
+
+output:
+  root_dir: /path/to/output_root
+  orientation_dir_pattern: "ori_{k:03d}"
+  stack_name_pattern: "proj_ori_{k:03d}.mrcs"
+  orientations_table: "orientations.tsv"
+  global_index_table: "index_particles.tsv"
+  per_orientation_index_pattern: "index_ori_{k:03d}.tsv"
+  relion_star: "particles.star"        # 必须生成，不可为空
+
+projection:
+  box_size: 64
+  mode: "sum"                          # sum | mean | max | central_slice
+  normalize: true
+  mask_path: null                      # 可选：mask 文件路径（MRC 格式），mask 内保留信号，mask 外用噪声填充
+  noise_mean: 0.0                      # Gaussian 噪声均值
+  noise_std: null                     # Gaussian 噪声标准差，如果为 null 则自动计算
+
+optics:
+  pixel_size: 3.5
+  voltage_kv: 300
+  cs_mm: 2.7
+  amplitude_contrast: 0.1
+  optics_group_name: "opticsGroup1"
+  optics_group_id: 1
+
