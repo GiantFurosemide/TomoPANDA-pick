@@ -134,7 +134,7 @@ def create_global_particle_plan(subtomo_df: pd.DataFrame, orientations_df: pd.Da
         subtomo_path = subtomo_row['subtomo_path']
         
         for _, ori_row in orientations_df.iterrows():
-            orientation_id = ori_row['orientation_id']
+            orientation_id = int(ori_row['orientation_id'])
             rot_deg = ori_row['rot_deg']
             tilt_deg = ori_row['tilt_deg']
             psi_deg = ori_row['psi_deg']
@@ -354,7 +354,7 @@ def write_global_index(global_plan_df: pd.DataFrame, output_root: str,
 
 
 def write_relion_star(global_plan_df: pd.DataFrame, output_root: str,
-                     relion_star: str, optics_config: dict):
+                     relion_star: str, optics_config: dict, box_size: int):
     """
     写入 RELION 3 格式的 particle.star 文件。
     
@@ -368,6 +368,8 @@ def write_relion_star(global_plan_df: pd.DataFrame, output_root: str,
         RELION star 文件名
     optics_config : dict
         Optics 配置字典
+    box_size : int
+        图像尺寸（box_size），用于添加到 optics 部分
     """
     # 准备图像名称（相对于 star 文件所在目录）
     star_dir = os.path.dirname(os.path.join(output_root, relion_star))
@@ -404,8 +406,76 @@ def write_relion_star(global_plan_df: pd.DataFrame, output_root: str,
         voltage_kv=optics_config['voltage_kv'],
         cs_mm=optics_config['cs_mm'],
         amplitude_contrast=optics_config['amplitude_contrast'],
-        output_file=star_path
+        output_file=star_path,
+        image_size=box_size
     )
+
+
+def write_per_orientation_star(global_plan_df: pd.DataFrame, output_root: str,
+                               star_pattern: str, optics_config: dict, box_size: int):
+    """
+    为每个 orientation 写入单独的 RELION 3 格式的 particle.star 文件。
+    
+    Parameters
+    ----------
+    global_plan_df : pd.DataFrame
+        全局粒子计划表
+    output_root : str
+        输出根目录
+    star_pattern : str
+        Star 文件名模式，如 "particles_ori_{k:03d}.star"
+    optics_config : dict
+        Optics 配置字典
+    box_size : int
+        图像尺寸（box_size），用于添加到 optics 部分
+    """
+    n_orientations = int(global_plan_df['orientation_id'].max() + 1)
+    
+    for orientation_id in tqdm(range(n_orientations), desc="Writing per-orientation star files"):
+        # 筛选该 orientation 的所有 particles
+        ori_plan = global_plan_df[global_plan_df['orientation_id'] == orientation_id]
+        ori_plan = ori_plan.sort_values('subtomo_id')
+        
+        if len(ori_plan) == 0:
+            continue
+        
+        # 准备图像名称和角度
+        image_names = []
+        angles_list = []
+        
+        for _, row in ori_plan.iterrows():
+            stack_relpath = row['stack_relpath']
+            slice_index = row['slice_index_in_stack']
+            
+            # 图像名称格式：slice_index@stack_relpath
+            image_name = f"{slice_index}@{stack_relpath}"
+            image_names.append(image_name)
+            
+            angles_list.append([
+                row['rot_deg'],
+                row['tilt_deg'],
+                row['psi_deg']
+            ])
+        
+        angles = np.array(angles_list)
+        
+        # 生成 star 文件名
+        star_filename = star_pattern.format(k=orientation_id)
+        star_path = os.path.join(output_root, star_filename)
+        
+        # 创建 RELION 3 star 文件
+        create_relion3_star(
+            image_names=image_names,
+            angles=angles,
+            optics_group_id=optics_config['optics_group_id'],
+            optics_group_name=optics_config['optics_group_name'],
+            pixel_size=optics_config['pixel_size'],
+            voltage_kv=optics_config['voltage_kv'],
+            cs_mm=optics_config['cs_mm'],
+            amplitude_contrast=optics_config['amplitude_contrast'],
+            output_file=star_path,
+            image_size=box_size
+        )
 
 
 def main():
@@ -484,12 +554,21 @@ def main():
     print("Writing global index...")
     write_global_index(global_plan_df, output_root, global_index_table)
     
-    # 7. 写入 RELION star 文件（强制）
+    # 7. 写入总的 RELION star 文件（包含所有 orientations）
     print("Writing RELION star file...")
-    write_relion_star(global_plan_df, output_root, relion_star, optics_config)
+    write_relion_star(global_plan_df, output_root, relion_star, optics_config, box_size)
     print(f"Saved RELION star file to {os.path.join(output_root, relion_star)}")
     
-    # 8. 保存解析后的配置
+    # 8. 为每个 orientation 写入单独的 RELION star 文件
+    print("Writing per-orientation RELION star files...")
+    # 从 relion_star 文件名生成模式
+    # 例如 "particles.star" -> "particles_ori_{k:03d}.star"
+    star_basename = os.path.splitext(relion_star)[0]  # 去掉扩展名
+    star_pattern = f"{star_basename}_ori_{{k:03d}}.star"
+    write_per_orientation_star(global_plan_df, output_root, star_pattern, optics_config, box_size)
+    print(f"Saved per-orientation RELION star files to {output_root}")
+    
+    # 9. 保存解析后的配置
     config_resolved_path = os.path.join(output_root, 'config_resolved.yaml')
     with open(config_resolved_path, 'w') as f:
         yaml.dump(config, f, default_flow_style=False)

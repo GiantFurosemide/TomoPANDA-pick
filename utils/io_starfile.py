@@ -125,7 +125,8 @@ def create_relion3_star(
     voltage_kv: float,
     cs_mm: float,
     amplitude_contrast: float,
-    output_file: str = 'particles.star'
+    output_file: str = 'particles.star',
+    image_size: int = None
 ) -> dict:
     """
     创建 RELION 3 格式的 STAR 文件，包含 optics 和 particles 两个 block。
@@ -150,6 +151,8 @@ def create_relion3_star(
         振幅对比度
     output_file : str, optional
         输出文件路径，默认 'particles.star'
+    image_size : int, optional
+        图像尺寸（box_size），如果提供则添加到 optics 部分
         
     Returns
     -------
@@ -157,14 +160,20 @@ def create_relion3_star(
         包含 'optics' 和 'particles' DataFrame 的字典
     """
     # 创建 optics DataFrame
-    optics_df = pd.DataFrame({
+    optics_dict = {
         'rlnOpticsGroupName': [optics_group_name],
         'rlnOpticsGroup': [optics_group_id],
         'rlnImagePixelSize': [pixel_size],
         'rlnVoltage': [voltage_kv],
         'rlnSphericalAberration': [cs_mm],
         'rlnAmplitudeContrast': [amplitude_contrast]
-    })
+    }
+    
+    # 如果提供了 image_size，添加到 optics
+    if image_size is not None:
+        optics_dict['rlnImageSize'] = [image_size]
+    
+    optics_df = pd.DataFrame(optics_dict)
     
     # 创建 particles DataFrame
     particles_df = pd.DataFrame({
