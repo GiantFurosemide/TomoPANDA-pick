@@ -236,34 +236,29 @@ def generate_projection_stacks(global_plan_df: pd.DataFrame, subtomo_df: pd.Data
         ori_plan = global_plan_df[global_plan_df['orientation_id'] == orientation_id]
         ori_plan = ori_plan.sort_values('subtomo_id')
         
-        # 创建 MRC 栈文件
+        # 创建 MRC 栈文件（逐片写入，避免一次性加载所有数据到内存）
+        # 注意：MRC 格式要求预先知道文件大小，初始化时需要临时内存
+        # 但之后使用内存映射方式逐片写入，处理过程中不会占用大量内存
+        stack_shape = (n_subtomos, box_size, box_size)
+        
+        # 步骤1：创建文件并初始化 header（需要临时内存，但立即释放）
         with mrcfile.new(stack_path, overwrite=True) as mrc_stack:
-            # 先处理第一个 subtomo 以确定栈的形状
-            first_subtomo_path = ori_plan.iloc[0]['subtomo_path']
-            with mrcfile.open(first_subtomo_path) as mrc:
-                first_volume = mrc.data
-                # 检查 mask 形状是否匹配
-                if mask is not None and mask.shape != first_volume.shape:
-                    print(f"Warning: mask shape {mask.shape} doesn't match volume shape {first_volume.shape}, skipping mask for this subtomo")
-                    current_mask = None
-                else:
-                    current_mask = mask
-                first_proj = project_3d_to_2d_rotated(
-                    first_volume, rot_deg, tilt_deg, psi_deg,
-                    box_size, mode=mode, normalize=normalize,
-                    mask=current_mask, noise_mean=noise_mean, noise_std=noise_std
-                )
-            
-            # 创建栈数组
-            stack_data = np.zeros((n_subtomos, box_size, box_size), dtype=np.float32)
-            stack_data[0] = first_proj
-            
-            # 处理剩余的 subtomo
-            for idx, (_, plan_row) in enumerate(ori_plan.iterrows()):
-                if idx == 0:
-                    continue  # 已经处理了第一个
-                    
+            init_data = np.zeros(stack_shape, dtype=np.float32)
+            mrc_stack.set_data(init_data)
+            mrc_stack.update_header_from_data()
+            del init_data  # 立即释放临时内存
+        
+        # 步骤2：使用内存映射方式打开文件，逐片写入（不占用大量内存）
+        with mrcfile.open(stack_path, mode='r+', permissive=True) as mrc_stack:
+            # 逐条处理每个 subtomo，立即写入
+            processed_count = 0
+            for _, plan_row in ori_plan.iterrows():
                 subtomo_path = plan_row['subtomo_path']
+                # 使用 slice_index_in_stack 确定写入位置（确保与 star 文件一致）
+                # slice_index_in_stack 是 1-based，数组索引是 0-based，所以需要减1
+                slice_idx = int(plan_row['slice_index_in_stack']) - 1
+                
+                # 读取 subtomo 并生成投影
                 with mrcfile.open(subtomo_path) as mrc:
                     volume = mrc.data
                     # 检查 mask 形状是否匹配
@@ -271,16 +266,26 @@ def generate_projection_stacks(global_plan_df: pd.DataFrame, subtomo_df: pd.Data
                         current_mask = None
                     else:
                         current_mask = mask
-                    proj = project_3d_to_2d_rotated(
-                        volume, rot_deg, tilt_deg, psi_deg,
-                        box_size, mode=mode, normalize=normalize,
-                        mask=current_mask, noise_mean=noise_mean, noise_std=noise_std
-                    )
-                    stack_data[idx] = proj
+                
+                # 生成投影（这是唯一在内存中的投影数据）
+                proj = project_3d_to_2d_rotated(
+                    volume, rot_deg, tilt_deg, psi_deg,
+                    box_size, mode=mode, normalize=normalize,
+                    mask=current_mask, noise_mean=noise_mean, noise_std=noise_std
+                )
+                
+                # 立即写入到栈文件的对应位置（使用 slice_index_in_stack 确保一致性）
+                # mrcfile 使用内存映射，直接写入磁盘，不会占用大量内存
+                mrc_stack.data[slice_idx] = proj
+                
+                processed_count += 1
+                # 定期刷新到磁盘（每100个刷新一次，平衡性能和安全性）
+                if processed_count % 100 == 0:
+                    mrc_stack.flush()
             
-            # 写入栈文件
-            mrc_stack.set_data(stack_data)
+            # 最后更新 header 并确保所有数据写入磁盘
             mrc_stack.update_header_from_data()
+            mrc_stack.flush()
 
 
 def write_per_orientation_index(global_plan_df: pd.DataFrame, output_root: str,
