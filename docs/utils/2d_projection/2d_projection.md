@@ -1,4 +1,3 @@
-
 # 基于球面 Fibonacci 均匀方向采样的 subtomo 多取向投影生成文档
 
 **使用：`python script.py -i config.yaml`**
@@ -270,7 +269,8 @@ _rlnImagePixelSize
 _rlnVoltage
 _rlnSphericalAberration
 _rlnAmplitudeContrast
-opticsGroup1  1  3.5  300  2.7  0.1
+_rlnImageSize
+opticsGroup1  1  3.5  300  2.7  0.1 48
 ```
 
 字段来自 YAML。
