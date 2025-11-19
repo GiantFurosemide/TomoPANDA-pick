@@ -336,7 +336,17 @@ output_root/
 
 ---
 
-# 12. 可选验证步骤
+
+
+# 12. 使用方法
+
+```bash
+conda activate tomopanda
+python utils/2d_projection/main.py -i config.yaml
+```
+
+
+# 13. 可选验证步骤
 
 1. 检查头三个方向，如 (0,0,1),(1,0,0),(0,1,0)
 2. 在 RELION 中：
