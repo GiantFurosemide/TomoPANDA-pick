@@ -39,6 +39,41 @@ spec.loader.exec_module(projection)
 project_3d_to_2d_rotated = projection.project_3d_to_2d_rotated
 
 
+def create_spherical_mask(size, radius, center=None):
+    """
+    创建球形 mask
+    
+    Parameters
+    ----------
+    size : tuple
+        Mask 尺寸 (Z, Y, X)
+    radius : float
+        球体半径
+    center : tuple or None
+        球心位置，如果为 None 则使用体积中心
+        
+    Returns
+    -------
+    np.ndarray
+        二值 mask（True 表示 mask 内）
+    """
+    z, y, x = np.meshgrid(
+        np.arange(size[0], dtype=float),
+        np.arange(size[1], dtype=float),
+        np.arange(size[2], dtype=float),
+        indexing='ij'
+    )
+    
+    if center is None:
+        center = (size[0] / 2.0 - 0.5, size[1] / 2.0 - 0.5, size[2] / 2.0 - 0.5)
+    
+    # 计算到中心的距离
+    dist = np.sqrt((z - center[0])**2 + (y - center[1])**2 + (x - center[2])**2)
+    mask = dist <= radius
+    
+    return mask
+
+
 def read_subtomo_list(txt_path: str) -> pd.DataFrame:
     """
     读取 subtomo 列表文件（每行一个 MRC 路径）。
@@ -201,8 +236,10 @@ def generate_projection_stacks(global_plan_df: pd.DataFrame, subtomo_df: pd.Data
         方向目录模式
     stack_name_pattern : str
         栈文件名模式
-    mask_path : str, optional
-        Mask 文件路径（MRC 格式）。如果提供，mask 内的区域保留原始信号，mask 外用噪声填充。
+    mask_path : str or float, optional
+        Mask 文件路径（MRC 格式）或球形 mask 半径（数字）。
+        如果提供文件路径，mask 内的区域保留原始信号，mask 外用噪声填充。
+        如果提供数字，将创建球形 mask，半径为该数字（单位：像素）。
         如果为 None，则不应用 mask。
     noise_mean : float, optional
         Gaussian 噪声的均值，默认 0.0
@@ -218,12 +255,28 @@ def generate_projection_stacks(global_plan_df: pd.DataFrame, subtomo_df: pd.Data
     if num_threads is None:
         num_threads = os.cpu_count() or 1
     
-    # 加载 mask（如果提供）
+    # 处理 mask_path：可能是文件路径或数字（球形mask半径）
     mask = None
-    if mask_path is not None and os.path.exists(mask_path):
-        with mrcfile.open(mask_path) as mrc:
-            mask = mrc.data.astype(bool)
-        print(f"Loaded mask from {mask_path}, shape: {mask.shape}")
+    mask_radius = None
+    
+    if mask_path is not None:
+        # 尝试将 mask_path 转换为数字（球形mask半径）
+        try:
+            mask_radius = float(mask_path)
+            # 应用半径限制：如果半径 > box_size/2，则设为 box_size/2*0.9
+            max_radius = box_size / 2.0 * 0.9
+            if mask_radius > max_radius:
+                print(f"Warning: mask radius {mask_radius} exceeds maximum {max_radius}, setting to {max_radius}")
+                mask_radius = max_radius
+            print(f"Using spherical mask with radius: {mask_radius:.2f} pixels")
+        except (ValueError, TypeError):
+            # 不是数字，尝试作为文件路径
+            if os.path.exists(mask_path):
+                with mrcfile.open(mask_path) as mrc:
+                    mask = mrc.data.astype(bool)
+                print(f"Loaded mask from {mask_path}, shape: {mask.shape}")
+            else:
+                print(f"Warning: mask_path '{mask_path}' is neither a valid number nor an existing file path. Ignoring mask.")
     
     # 按方向分组处理
     for orientation_id in tqdm(range(n_orientations), desc="Generating projection stacks"):
@@ -306,11 +359,18 @@ def generate_projection_stacks(global_plan_df: pd.DataFrame, subtomo_df: pd.Data
                         f"File might be corrupted or in an unexpected format."
                     )
                 
-                # 检查 mask 形状是否匹配
-                if mask is not None and mask.shape != volume.shape:
-                    current_mask = None
-                else:
-                    current_mask = mask
+                # 处理 mask：可能是预加载的mask文件，或者需要创建球形mask
+                current_mask = None
+                if mask_radius is not None:
+                    # 创建球形 mask
+                    current_mask = create_spherical_mask(volume.shape, mask_radius)
+                elif mask is not None:
+                    # 使用预加载的 mask 文件
+                    if mask.shape == volume.shape:
+                        current_mask = mask
+                    else:
+                        print(f"Warning: mask shape {mask.shape} doesn't match volume shape {volume.shape}, ignoring mask for this volume")
+                        current_mask = None
             
             # 生成投影
             proj = project_3d_to_2d_rotated(

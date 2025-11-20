@@ -18,7 +18,9 @@ projection:
   box_size: 64
   mode: "sum"                          # sum | mean | max | central_slice
   normalize: true
-  mask_path: null                      # 可选：mask 文件路径（MRC 格式），mask 内保留信号，mask 外用噪声填充
+  mask_path: null                      # 可选：mask 文件路径（MRC 格式）或球形mask半径（数字，单位：像素）
+                                       #       如果为数字，将创建球形mask，半径自动限制为 box_size/2*0.9
+                                       #       mask 内保留信号，mask 外用噪声填充
   noise_mean: 0.0                      # Gaussian 噪声均值
   noise_std: null                     # Gaussian 噪声标准差，如果为 null 则自动计算
 

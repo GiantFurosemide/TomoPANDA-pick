@@ -130,6 +130,33 @@ def project_3d_to_2d_rotated(
         cval=0.0
     )
     
+    # 处理旋转后边界区域的0值问题
+    # 如果旋转后某些区域是0（可能是边界填充的0），用噪声替换以避免影响投影
+    # 注意：这里只替换那些在原始体积边界外的0值，而不是所有0值
+    # 简单方法：如果某个体素是0且周围有很多0，可能是边界区域，用噪声填充
+    if mask is None:
+        # 没有mask时，检测并填充边界0值区域
+        # 计算噪声标准差（如果未提供）
+        if noise_std is None:
+            noise_std = np.std(volume)
+        
+        # 检测边界0值区域：如果整个Z列（沿投影方向）都是0，很可能是旋转后的边界区域
+        # 这些0值是由map_coordinates的边界填充产生的，会影响投影结果
+        zero_mask = (rotated_volume == 0.0)
+        if np.any(zero_mask):
+            # 检测哪些(Y, X)位置的整个Z列都是0（肯定是边界区域）
+            z_all_zero = np.all(zero_mask, axis=0)  # shape: (Y, X)
+            
+            # 对于这些边界区域，用噪声填充以避免0值影响投影
+            if np.any(z_all_zero):
+                # 为边界区域生成噪声
+                boundary_noise = np.random.normal(noise_mean, noise_std, size=rotated_volume.shape)
+                # 只替换那些整个Z列都是0的位置
+                for y_idx in range(rotated_volume.shape[1]):
+                    for x_idx in range(rotated_volume.shape[2]):
+                        if z_all_zero[y_idx, x_idx]:
+                            rotated_volume[:, y_idx, x_idx] = boundary_noise[:, y_idx, x_idx]
+    
     # 沿 Z 轴投影
     if mode == "sum":
         projection = np.sum(rotated_volume, axis=0)
