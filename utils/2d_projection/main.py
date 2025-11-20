@@ -267,6 +267,45 @@ def generate_projection_stacks(global_plan_df: pd.DataFrame, subtomo_df: pd.Data
             # 读取 subtomo 并生成投影
             with mrcfile.open(subtomo_path) as mrc:
                 volume = mrc.data
+                
+                # 获取 MRC header 中的实际维度（可能被压缩）
+                header_shape = (mrc.header.nz, mrc.header.ny, mrc.header.nx)
+                
+                # 如果 volume 维度被压缩（比如某个维度是1），尝试恢复
+                if volume.ndim == 2 and len(header_shape) == 3:
+                    # 检查是否是单层的情况（Z=1）
+                    if header_shape[0] == 1:
+                        volume = volume[np.newaxis, :, :]  # 添加 Z 维度
+                    elif header_shape[1] == 1:
+                        volume = volume[:, np.newaxis, :]  # 添加 Y 维度
+                    elif header_shape[2] == 1:
+                        volume = volume[:, :, np.newaxis]  # 添加 X 维度
+                    else:
+                        # 无法确定如何恢复，报错
+                        raise ValueError(
+                            f"Subtomo file '{subtomo_path}' has inconsistent dimensions: "
+                            f"header shape {header_shape} but data shape {volume.shape}. "
+                            f"This might indicate a corrupted or incorrectly formatted MRC file."
+                        )
+                elif volume.ndim == 1:
+                    # 1D 数组，尝试根据 header 重塑
+                    if len(header_shape) == 3:
+                        volume = volume.reshape(header_shape)
+                    else:
+                        raise ValueError(
+                            f"Subtomo file '{subtomo_path}' contains 1D data with shape {volume.shape}, "
+                            f"but 3D volume is required. Header shape: {header_shape}"
+                        )
+                
+                # 验证 volume 是 3D 数组
+                if volume.ndim != 3:
+                    raise ValueError(
+                        f"Subtomo file '{subtomo_path}' contains {volume.ndim}D data with shape {volume.shape} "
+                        f"(header indicates {header_shape}), but 3D volume is required (expected shape: (Z, Y, X)). "
+                        f"Please check the MRC file format. "
+                        f"File might be corrupted or in an unexpected format."
+                    )
+                
                 # 检查 mask 形状是否匹配
                 if mask is not None and mask.shape != volume.shape:
                     current_mask = None
@@ -311,7 +350,17 @@ def generate_projection_stacks(global_plan_df: pd.DataFrame, subtomo_df: pd.Data
                                 mrc_stack.flush()
                     except Exception as e:
                         plan_row = future_to_row[future]
-                        print(f"Error processing {plan_row['subtomo_path']}: {e}")
+                        subtomo_path = plan_row.get('subtomo_path', 'unknown')
+                        subtomo_id = plan_row.get('subtomo_id', 'unknown')
+                        print(f"\n{'='*80}")
+                        print(f"ERROR processing subtomo:")
+                        print(f"  Subtomo ID: {subtomo_id}")
+                        print(f"  File path: {subtomo_path}")
+                        print(f"  Error type: {type(e).__name__}")
+                        print(f"  Error message: {str(e)}")
+                        print(f"{'='*80}\n")
+                        # 重新抛出异常以便用户知道有问题
+                        raise
                         raise
             
             # 最后更新 header 并确保所有数据写入磁盘

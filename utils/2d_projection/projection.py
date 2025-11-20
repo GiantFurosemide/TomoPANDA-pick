@@ -63,6 +63,14 @@ def project_3d_to_2d_rotated(
     np.ndarray
         2D 投影图像，形状为 (box_size, box_size)
     """
+    # 验证输入 volume 的维度
+    volume = np.asarray(volume)
+    if volume.ndim != 3:
+        raise ValueError(
+            f"volume must be 3D array, but got {volume.ndim}D array with shape {volume.shape}. "
+            f"Expected shape: (Z, Y, X)"
+        )
+    
     # 应用 mask（如果提供）
     if mask is not None:
         mask = np.asarray(mask, dtype=bool)
