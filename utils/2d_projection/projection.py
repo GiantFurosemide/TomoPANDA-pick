@@ -47,7 +47,11 @@ def project_3d_to_2d_rotated(
     box_size : int
         输出图像尺寸（box_size × box_size）
     mode : str, optional
-        投影模式，默认 "sum"
+        投影模式，默认 "sum"。可选值：
+        - "sum": 沿Z轴求和投影（累加所有层，适合增强信号）
+        - "mean": 沿Z轴平均投影（取平均值，适合减少噪声）
+        - "max": 沿Z轴最大投影（取每列最大值，适合突出最强信号）
+        - "central_slice": 中心切片（取Z方向中心层，类似单层图像）
     normalize : bool, optional
         是否归一化输出，默认 True
     mask : np.ndarray, optional
