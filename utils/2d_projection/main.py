@@ -13,6 +13,8 @@ import pandas as pd
 import mrcfile
 from pathlib import Path
 from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 # 导入项目模块
 import sys
@@ -174,7 +176,8 @@ def generate_projection_stacks(global_plan_df: pd.DataFrame, subtomo_df: pd.Data
                                orientations_df: pd.DataFrame, output_root: str,
                                box_size: int, mode: str, normalize: bool,
                                orientation_dir_pattern: str, stack_name_pattern: str,
-                               mask_path: str = None, noise_mean: float = 0.0, noise_std: float = None):
+                               mask_path: str = None, noise_mean: float = 0.0, noise_std: float = None,
+                               num_threads: int = None):
     """
     按方向生成投影栈。
     
@@ -205,9 +208,15 @@ def generate_projection_stacks(global_plan_df: pd.DataFrame, subtomo_df: pd.Data
         Gaussian 噪声的均值，默认 0.0
     noise_std : float, optional
         Gaussian 噪声的标准差。如果为 None，则自动计算。
+    num_threads : int, optional
+        线程数。如果为 None，则使用 CPU 核心数。
     """
     n_orientations = len(orientations_df)
     n_subtomos = len(subtomo_df)
+    
+    # 设置线程数
+    if num_threads is None:
+        num_threads = os.cpu_count() or 1
     
     # 加载 mask（如果提供）
     mask = None
@@ -248,40 +257,62 @@ def generate_projection_stacks(global_plan_df: pd.DataFrame, subtomo_df: pd.Data
             mrc_stack.update_header_from_data()
             del init_data  # 立即释放临时内存
         
-        # 步骤2：使用内存映射方式打开文件，逐片写入（不占用大量内存）
+        # 步骤2：使用内存映射方式打开文件，多线程并行处理 subtomo
+        # 定义处理单个 subtomo 的函数
+        def process_subtomo(plan_row):
+            """处理单个 subtomo 并返回结果"""
+            subtomo_path = plan_row['subtomo_path']
+            slice_idx = int(plan_row['slice_index_in_stack']) - 1
+            
+            # 读取 subtomo 并生成投影
+            with mrcfile.open(subtomo_path) as mrc:
+                volume = mrc.data
+                # 检查 mask 形状是否匹配
+                if mask is not None and mask.shape != volume.shape:
+                    current_mask = None
+                else:
+                    current_mask = mask
+            
+            # 生成投影
+            proj = project_3d_to_2d_rotated(
+                volume, rot_deg, tilt_deg, psi_deg,
+                box_size, mode=mode, normalize=normalize,
+                mask=current_mask, noise_mean=noise_mean, noise_std=noise_std
+            )
+            
+            return slice_idx, proj
+        
+        # 使用线程池并行处理
         with mrcfile.open(stack_path, mode='r+', permissive=True) as mrc_stack:
-            # 逐条处理每个 subtomo，立即写入
-            processed_count = 0
-            for _, plan_row in ori_plan.iterrows():
-                subtomo_path = plan_row['subtomo_path']
-                # 使用 slice_index_in_stack 确定写入位置（确保与 star 文件一致）
-                # slice_index_in_stack 是 1-based，数组索引是 0-based，所以需要减1
-                slice_idx = int(plan_row['slice_index_in_stack']) - 1
+            # 使用锁来保护写入和 flush 操作（虽然每个线程写入不同的 slice，但为了安全起见使用锁）
+            write_lock = threading.Lock()
+            processed_count = [0]  # 使用列表以便在线程间共享
+            
+            with ThreadPoolExecutor(max_workers=num_threads) as executor:
+                # 提交所有任务
+                future_to_row = {
+                    executor.submit(process_subtomo, plan_row): plan_row 
+                    for _, plan_row in ori_plan.iterrows()
+                }
                 
-                # 读取 subtomo 并生成投影
-                with mrcfile.open(subtomo_path) as mrc:
-                    volume = mrc.data
-                    # 检查 mask 形状是否匹配
-                    if mask is not None and mask.shape != volume.shape:
-                        current_mask = None
-                    else:
-                        current_mask = mask
-                
-                # 生成投影（这是唯一在内存中的投影数据）
-                proj = project_3d_to_2d_rotated(
-                    volume, rot_deg, tilt_deg, psi_deg,
-                    box_size, mode=mode, normalize=normalize,
-                    mask=current_mask, noise_mean=noise_mean, noise_std=noise_std
-                )
-                
-                # 立即写入到栈文件的对应位置（使用 slice_index_in_stack 确保一致性）
-                # mrcfile 使用内存映射，直接写入磁盘，不会占用大量内存
-                mrc_stack.data[slice_idx] = proj
-                
-                processed_count += 1
-                # 定期刷新到磁盘（每100个刷新一次，平衡性能和安全性）
-                if processed_count % 100 == 0:
-                    mrc_stack.flush()
+                # 处理完成的任务
+                for future in tqdm(as_completed(future_to_row), 
+                                  total=len(future_to_row), 
+                                  desc=f"Processing orientation {orientation_id}",
+                                  leave=False):
+                    try:
+                        slice_idx, proj = future.result()
+                        # 写入到栈文件的对应位置（使用锁保护，确保线程安全）
+                        with write_lock:
+                            mrc_stack.data[slice_idx] = proj
+                            processed_count[0] += 1
+                            # 定期刷新到磁盘（每100个刷新一次，平衡性能和安全性）
+                            if processed_count[0] % 100 == 0:
+                                mrc_stack.flush()
+                    except Exception as e:
+                        plan_row = future_to_row[future]
+                        print(f"Error processing {plan_row['subtomo_path']}: {e}")
+                        raise
             
             # 最后更新 header 并确保所有数据写入磁盘
             mrc_stack.update_header_from_data()
@@ -542,11 +573,14 @@ def main():
     mask_path = config['projection'].get('mask_path', None)
     noise_mean = config['projection'].get('noise_mean', 0.0)
     noise_std = config['projection'].get('noise_std', None)
+    # 读取线程数配置（可选）
+    num_threads = config.get('processing', {}).get('num_threads', None)
     
     generate_projection_stacks(
         global_plan_df, subtomo_df, orientations_df, output_root,
         box_size, mode, normalize, orientation_dir_pattern, stack_name_pattern,
-        mask_path=mask_path, noise_mean=noise_mean, noise_std=noise_std
+        mask_path=mask_path, noise_mean=noise_mean, noise_std=noise_std,
+        num_threads=num_threads
     )
     
     # 5. 写入 per-orientation index

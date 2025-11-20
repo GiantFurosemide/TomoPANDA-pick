@@ -22,6 +22,9 @@ projection:
   noise_mean: 0.0                      # Gaussian 噪声均值
   noise_std: null                     # Gaussian 噪声标准差，如果为 null 则自动计算
 
+processing:
+  num_threads: null                    # 线程数，如果为 null 则使用 CPU 核心数
+
 optics:
   pixel_size: 3.5
   voltage_kv: 300
