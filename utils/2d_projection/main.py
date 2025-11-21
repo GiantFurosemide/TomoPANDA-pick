@@ -37,6 +37,61 @@ spec = importlib.util.spec_from_file_location("projection", projection_path)
 projection = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(projection)
 project_3d_to_2d_rotated = projection.project_3d_to_2d_rotated
+project_3d_to_2d_rotated_gpu = getattr(projection, 'project_3d_to_2d_rotated_gpu', None)
+
+
+def parse_gpu_devices(gpu_device):
+    """
+    解析GPU设备字符串，支持多种格式。
+    
+    支持的格式：
+    - "0,1,2,3" -> ["cuda:0", "cuda:1", "cuda:2", "cuda:3"]
+    - "cuda:0,cuda:1" -> ["cuda:0", "cuda:1"]
+    - "0" -> ["cuda:0"]
+    - ["cuda:0", "cuda:1"] -> 直接返回列表
+    - None -> None
+    
+    Parameters
+    ----------
+    gpu_device : str, list, or None
+        GPU设备指定
+        
+    Returns
+    -------
+    list or None
+        GPU设备列表，如 ["cuda:0", "cuda:1"]，如果为None则返回None
+    """
+    if gpu_device is None:
+        return None
+    
+    # 如果已经是列表，直接返回
+    if isinstance(gpu_device, list):
+        return gpu_device
+    
+    # 如果是字符串，解析它
+    if isinstance(gpu_device, str):
+        devices = []
+        # 按逗号分割
+        parts = [p.strip() for p in gpu_device.split(',')]
+        for part in parts:
+            if not part:
+                continue
+            # 如果已经是 "cuda:X" 格式，直接使用
+            if part.startswith('cuda:'):
+                devices.append(part)
+            else:
+                # 否则假设是数字，添加 "cuda:" 前缀
+                try:
+                    gpu_id = int(part)
+                    devices.append(f'cuda:{gpu_id}')
+                except ValueError:
+                    raise ValueError(
+                        f"Invalid GPU device format: '{part}'. "
+                        f"Expected format: '0,1,2' or 'cuda:0,cuda:1'"
+                    )
+        return devices if devices else None
+    
+    raise TypeError(f"gpu_device must be str, list, or None, got {type(gpu_device)}")
 
 
 def create_spherical_mask(size, radius, center=None):
@@ -212,7 +267,7 @@ def generate_projection_stacks(global_plan_df: pd.DataFrame, subtomo_df: pd.Data
                                box_size: int, mode: str, normalize: bool,
                                orientation_dir_pattern: str, stack_name_pattern: str,
                                mask_path: str = None, noise_mean: float = 0.0, noise_std: float = None,
-                               num_threads: int = None):
+                               num_threads: int = None, use_gpu: bool = False, gpu_device = None):
     """
     按方向生成投影栈。
     
@@ -247,13 +302,70 @@ def generate_projection_stacks(global_plan_df: pd.DataFrame, subtomo_df: pd.Data
         Gaussian 噪声的标准差。如果为 None，则自动计算。
     num_threads : int, optional
         线程数。如果为 None，则使用 CPU 核心数。
+    use_gpu : bool, optional
+        是否使用GPU加速，默认 False
+    gpu_device : str, list, or None, optional
+        GPU设备指定。支持多种格式：
+        - "0,1,2,3" -> 使用GPU 0,1,2,3
+        - "cuda:0,cuda:1" -> 使用GPU 0,1
+        - "0" -> 使用GPU 0
+        - ["cuda:0", "cuda:1"] -> 使用GPU 0,1
+        如果为 None 且 use_gpu=True，则自动选择第一个可用GPU。
     """
     n_orientations = len(orientations_df)
     n_subtomos = len(subtomo_df)
     
-    # 设置线程数
+    # 解析GPU设备列表
+    gpu_devices = None
+    if use_gpu:
+        if project_3d_to_2d_rotated_gpu is None:
+            print("Warning: GPU acceleration requested but PyTorch GPU function not available. Falling back to CPU.")
+            use_gpu = False
+        else:
+            try:
+                import torch
+                if not torch.cuda.is_available():
+                    print("Warning: GPU acceleration requested but CUDA is not available. Falling back to CPU.")
+                    use_gpu = False
+                else:
+                    # 解析GPU设备
+                    gpu_devices = parse_gpu_devices(gpu_device)
+                    if gpu_devices is None:
+                        # 如果没有指定，使用第一个可用GPU
+                        gpu_devices = ['cuda:0']
+                    
+                    # 验证所有GPU设备是否可用
+                    available_devices = []
+                    for dev in gpu_devices:
+                        try:
+                            dev_id = int(dev.split(':')[1])
+                            if dev_id < torch.cuda.device_count():
+                                available_devices.append(dev)
+                            else:
+                                print(f"Warning: GPU device {dev} is not available (only {torch.cuda.device_count()} GPUs available). Skipping.")
+                        except (ValueError, IndexError):
+                            print(f"Warning: Invalid GPU device format: {dev}. Skipping.")
+                    
+                    if not available_devices:
+                        print("Warning: No valid GPU devices found. Falling back to CPU.")
+                        use_gpu = False
+                    else:
+                        gpu_devices = available_devices
+                        if len(gpu_devices) == 1:
+                            print(f"Using GPU acceleration on device: {gpu_devices[0]}")
+                        else:
+                            print(f"Using GPU acceleration on {len(gpu_devices)} devices: {', '.join(gpu_devices)}")
+            except ImportError:
+                print("Warning: PyTorch not available. Falling back to CPU.")
+                use_gpu = False
+    
+    # 设置线程数（GPU模式下，线程数主要用于数据加载）
     if num_threads is None:
-        num_threads = os.cpu_count() or 1
+        if use_gpu:
+            # GPU模式下，使用较少的线程（主要用于数据加载）
+            num_threads = min(4, os.cpu_count() or 1)
+        else:
+            num_threads = os.cpu_count() or 1
     
     # 处理 mask_path：可能是文件路径或数字（球形mask半径）
     mask = None
@@ -311,11 +423,35 @@ def generate_projection_stacks(global_plan_df: pd.DataFrame, subtomo_df: pd.Data
             del init_data  # 立即释放临时内存
         
         # 步骤2：使用内存映射方式打开文件，多线程并行处理 subtomo
+        # 创建GPU设备轮询器（如果使用多GPU）
+        gpu_device_index = 0
+        if use_gpu and gpu_devices and len(gpu_devices) > 1:
+            import threading
+            gpu_lock = threading.Lock()
+            def get_next_gpu():
+                """获取下一个GPU设备（轮询方式）"""
+                nonlocal gpu_device_index
+                with gpu_lock:
+                    device = gpu_devices[gpu_device_index]
+                    gpu_device_index = (gpu_device_index + 1) % len(gpu_devices)
+                    return device
+        elif use_gpu and gpu_devices:
+            # 单GPU情况
+            single_gpu = gpu_devices[0]
+            def get_next_gpu():
+                return single_gpu
+        else:
+            def get_next_gpu():
+                return None
+        
         # 定义处理单个 subtomo 的函数
         def process_subtomo(plan_row):
             """处理单个 subtomo 并返回结果"""
             subtomo_path = plan_row['subtomo_path']
             slice_idx = int(plan_row['slice_index_in_stack']) - 1
+            
+            # 获取分配给这个任务的GPU设备
+            assigned_gpu = get_next_gpu() if use_gpu else None
             
             # 读取 subtomo 并生成投影
             with mrcfile.open(subtomo_path) as mrc:
@@ -372,12 +508,20 @@ def generate_projection_stacks(global_plan_df: pd.DataFrame, subtomo_df: pd.Data
                         print(f"Warning: mask shape {mask.shape} doesn't match volume shape {volume.shape}, ignoring mask for this volume")
                         current_mask = None
             
-            # 生成投影
-            proj = project_3d_to_2d_rotated(
-                volume, rot_deg, tilt_deg, psi_deg,
-                box_size, mode=mode, normalize=normalize,
-                mask=current_mask, noise_mean=noise_mean, noise_std=noise_std
-            )
+            # 生成投影（根据配置选择CPU或GPU版本）
+            if use_gpu and assigned_gpu:
+                proj = project_3d_to_2d_rotated_gpu(
+                    volume, rot_deg, tilt_deg, psi_deg,
+                    box_size, mode=mode, normalize=normalize,
+                    mask=current_mask, noise_mean=noise_mean, noise_std=noise_std,
+                    device=assigned_gpu
+                )
+            else:
+                proj = project_3d_to_2d_rotated(
+                    volume, rot_deg, tilt_deg, psi_deg,
+                    box_size, mode=mode, normalize=normalize,
+                    mask=current_mask, noise_mean=noise_mean, noise_std=noise_std
+                )
             
             return slice_idx, proj
         
@@ -682,14 +826,17 @@ def main():
     mask_path = config['projection'].get('mask_path', None)
     noise_mean = config['projection'].get('noise_mean', 0.0)
     noise_std = config['projection'].get('noise_std', None)
-    # 读取线程数配置（可选）
-    num_threads = config.get('processing', {}).get('num_threads', None)
+    # 读取处理配置（可选）
+    processing_config = config.get('processing', {})
+    num_threads = processing_config.get('num_threads', None)
+    use_gpu = processing_config.get('use_gpu', False)
+    gpu_device = processing_config.get('gpu_device', None)
     
     generate_projection_stacks(
         global_plan_df, subtomo_df, orientations_df, output_root,
         box_size, mode, normalize, orientation_dir_pattern, stack_name_pattern,
         mask_path=mask_path, noise_mean=noise_mean, noise_std=noise_std,
-        num_threads=num_threads
+        num_threads=num_threads, use_gpu=use_gpu, gpu_device=gpu_device
     )
     
     # 5. 写入 per-orientation index

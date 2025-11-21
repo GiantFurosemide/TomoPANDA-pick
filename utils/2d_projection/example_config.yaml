@@ -30,6 +30,12 @@ projection:
 
 processing:
   num_threads: null                    # 线程数，如果为 null 则使用 CPU 核心数
+  use_gpu: false                       # 是否使用GPU加速（需要PyTorch和CUDA）
+  gpu_device: null                     # GPU设备指定，支持多种格式：
+                                       #   - "0,1,2,3" -> 使用GPU 0,1,2,3（推荐，简单格式）
+                                       #   - "cuda:0,cuda:1" -> 使用GPU 0,1
+                                       #   - "0" -> 使用GPU 0
+                                       #   如果为 null 且 use_gpu=true，则自动选择第一个可用GPU
 
 optics:
   pixel_size: 3.5
