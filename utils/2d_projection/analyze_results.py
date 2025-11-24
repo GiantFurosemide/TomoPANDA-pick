@@ -745,113 +745,37 @@ def process_star_txt_tbl(
 if __name__ == '__main__':
     import argparse
     
-    parser = argparse.ArgumentParser(description='2D投影结果分析工具')
-    parser.add_argument('-s', '--star', type=str, help='输入particle star文件路径')
-    parser.add_argument('-t', '--txt', type=str, help='输入txt文件路径')
-    parser.add_argument('-i', '--indices', type=str, nargs='+', 
-                       help='要提取的行index列表（1-based），空格分隔')
-    parser.add_argument('-o', '--output', type=str, help='输出txt文件路径')
-    parser.add_argument('--index-file', type=str, help='保存0-based indices的txt文件路径')
-    parser.add_argument('--zero-based', '--0based', dest='zero_based', action='store_true', 
-                       help='indices是0-based的（仅在使用-i参数时有效）')
-    parser.add_argument('--tbl', type=str, help='输入Dynamo tbl文件路径')
-    parser.add_argument('--output-tbl', type=str, help='输出tbl文件路径')
-    parser.add_argument('--extract-tbl-by-txt', action='store_true',
-                       help='从txt文件提取颗粒ID，然后从tbl文件提取对应的行')
-    parser.add_argument('--output-dir', type=str, help='输出目录（用于process-star-txt-tbl功能）')
-    parser.add_argument('--process-star-txt-tbl', action='store_true',
-                       help='整合功能：从star提取indices，从particle txt提取行，提取颗粒ID，从tbl提取行')
+    parser = argparse.ArgumentParser(description='2D投影结果分析工具 - 完整流程处理')
+    parser.add_argument('-s', '--star', type=str, required=True, help='输入particle star文件路径')
+    parser.add_argument('-t', '--txt', type=str, required=True, help='输入particle txt文件路径')
+    parser.add_argument('--tbl', type=str, required=True, help='输入Dynamo tbl文件路径')
+    parser.add_argument('--output-dir', type=str, required=True,
+                       help='输出目录，所有生成的文件将保存在此目录中')
+    parser.add_argument('--process-star-txt-tbl', action='store_true', default=True,
+                       help='整合功能：从star提取indices，从particle txt提取行，提取颗粒ID，从tbl提取行（默认启用）')
     
     args = parser.parse_args()
     
-    # 如果提供了star文件和txt文件，使用整合函数
-    if args.star and args.txt:
-        if args.output is None:
-            args.output = str(Path(args.txt).parent / f"{Path(args.txt).stem}_extracted.txt")
-        lines = extract_lines_from_star_and_txt(
-            args.star,
-            args.txt,
-            args.output,
-            args.index_file
-        )
-        print(f"Extracted {len(lines)} lines from {args.txt} to {args.output}")
-        if args.index_file:
-            print(f"Saved 0-based indices to {args.index_file}")
-    
-    # 如果只提供了star文件，只提取indices
-    elif args.star:
-        indices = extract_slice_indices_from_star(args.star, args.index_file)
-        print(f"Found {len(indices)} unique slice indices (1-based):")
-        print(sorted(indices))
-        if args.index_file:
-            print(f"Saved 0-based indices to {args.index_file}")
-    
-    # 如果只提供了txt和indices，提取指定行
-    elif args.txt and args.indices:
-        indices = [int(i) for i in args.indices]
-        if args.output is None:
-            args.output = str(Path(args.txt).parent / f"{Path(args.txt).stem}_extracted.txt")
-        lines = extract_lines_by_indices(
-            args.txt, 
-            indices, 
-            args.output,
-            indices_are_0based=getattr(args, 'zero_based', False)
-        )
-        print(f"Extracted {len(lines)} lines to: {args.output}")
-    
-    # 如果使用process-star-txt-tbl功能（新的整合功能）
-    elif args.process_star_txt_tbl:
-        if not args.star:
-            parser.error("--process-star-txt-tbl requires --star argument")
-        if not args.txt:
-            parser.error("--process-star-txt-tbl requires --txt argument")
-        if not args.tbl:
-            parser.error("--process-star-txt-tbl requires --tbl argument")
-        if not args.output_dir:
-            parser.error("--process-star-txt-tbl requires --output-dir argument")
-        
-        result = process_star_txt_tbl(
-            args.star,
-            args.txt,
-            args.tbl,
-            args.output_dir
-        )
-        print(f"\n==========================================")
-        print(f"Processing completed successfully!")
-        print(f"==========================================")
-        print(f"Output directory:   {Path(args.output_dir).absolute()}")
-        print(f"")
-        print(f"Generated files:")
-        print(f"  1. Index file:        {result['index_file'].absolute()}")
-        print(f"  2. Particle txt file: {result['particle_txt_file'].absolute()}")
-        print(f"  3. TBL file:          {result['tbl_file'].absolute()}")
-        print(f"")
-        print(f"Summary:")
-        print(f"  - Extracted {len(result['indices_1based'])} unique slice indices")
-        print(f"  - Extracted {len(result['particle_ids'])} unique particle IDs")
-        print(f"  - Extracted {len(result['particle_ids'])} particles from TBL")
-        print(f"==========================================")
-    
-    # 如果使用extract-tbl-by-txt功能
-    elif args.extract_tbl_by_txt:
-        if not args.txt:
-            parser.error("--extract-tbl-by-txt requires --txt argument")
-        if not args.tbl:
-            parser.error("--extract-tbl-by-txt requires --tbl argument")
-        if not args.output_tbl:
-            args.output_tbl = str(Path(args.tbl).parent / f"{Path(args.tbl).stem}_filtered.tbl")
-        
-        filtered_df = extract_tbl_by_particle_txt(
-            args.txt,
-            args.tbl,
-            args.output_tbl
-        )
-        print(f"Extracted {len(filtered_df)} particles to: {args.output_tbl}")
-    
-    # 如果只提供了txt和tbl，但没有使用extract-tbl-by-txt标志，给出提示
-    elif args.txt and args.tbl:
-        parser.error("Use --extract-tbl-by-txt flag to extract tbl rows by particle IDs from txt file")
-    
-    else:
-        parser.print_help()
+    # 执行完整流程
+    result = process_star_txt_tbl(
+        args.star,
+        args.txt,
+        args.tbl,
+        args.output_dir
+    )
+    print(f"\n==========================================")
+    print(f"Processing completed successfully!")
+    print(f"==========================================")
+    print(f"Output directory:   {Path(args.output_dir).absolute()}")
+    print(f"")
+    print(f"Generated files:")
+    print(f"  1. Index file:        {result['index_file'].absolute()}")
+    print(f"  2. Particle txt file: {result['particle_txt_file'].absolute()}")
+    print(f"  3. TBL file:          {result['tbl_file'].absolute()}")
+    print(f"")
+    print(f"Summary:")
+    print(f"  - Extracted {len(result['indices_1based'])} unique slice indices")
+    print(f"  - Extracted {len(result['particle_ids'])} unique particle IDs")
+    print(f"  - Extracted {len(result['particle_ids'])} particles from TBL")
+    print(f"==========================================")
 
