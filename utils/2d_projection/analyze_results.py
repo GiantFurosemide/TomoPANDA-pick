@@ -654,18 +654,27 @@ def process_star_txt_tbl(
     if not tbl_file.exists():
         raise FileNotFoundError(f"TBL file not found: {tbl_file}")
     
-    # 创建输出目录
+    # 创建输出目录（转换为绝对路径以确保正确）
+    output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Output directory (absolute): {output_dir}")
     
     # 步骤1：从star文件提取slice indices（1-based）
     index_file = output_dir / "index.txt"
+    print(f"Step 1: Saving index file to: {index_file.absolute()}")
     indices_1based = extract_slice_indices_from_star(star_file, index_file)
     print(f"Step 1: Extracted {len(indices_1based)} unique slice indices from star file")
+    # 验证文件是否创建
+    if index_file.exists():
+        print(f"Step 1: ✓ Index file created successfully: {index_file.absolute()}")
+    else:
+        print(f"Step 1: ✗ WARNING: Index file not found at: {index_file.absolute()}")
     
     # 步骤2：从particle txt文件提取对应的行
     particle_txt_basename = particle_txt_file.stem  # 不含扩展名的文件名
     particle_txt_ext = particle_txt_file.suffix      # 扩展名
     output_particle_txt = output_dir / f"{particle_txt_basename}.processed{particle_txt_ext}"
+    print(f"Step 2: Saving particle txt file to: {output_particle_txt.absolute()}")
     
     extracted_lines = extract_lines_by_indices(
         particle_txt_file,
@@ -674,6 +683,11 @@ def process_star_txt_tbl(
         indices_are_0based=False
     )
     print(f"Step 2: Extracted {len(extracted_lines)} lines from particle txt file")
+    # 验证文件是否创建
+    if output_particle_txt.exists():
+        print(f"Step 2: ✓ Particle txt file created successfully: {output_particle_txt.absolute()}")
+    else:
+        print(f"Step 2: ✗ WARNING: Particle txt file not found at: {output_particle_txt.absolute()}")
     
     # 步骤3：从提取的particle txt中提取颗粒ID
     particle_ids = extract_particle_ids_from_txt(output_particle_txt)
@@ -683,6 +697,7 @@ def process_star_txt_tbl(
     tbl_basename = tbl_file.stem  # 不含扩展名的文件名
     tbl_ext = tbl_file.suffix     # 扩展名
     output_tbl = output_dir / f"{tbl_basename}.processed{tbl_ext}"
+    print(f"Step 4: Saving tbl file to: {output_tbl.absolute()}")
     
     filtered_df = filter_dynamo_tbl_by_particle_ids(
         tbl_file,
@@ -690,6 +705,11 @@ def process_star_txt_tbl(
         output_tbl
     )
     print(f"Step 4: Extracted {len(filtered_df)} particles from tbl file")
+    # 验证文件是否创建
+    if output_tbl.exists():
+        print(f"Step 4: ✓ TBL file created successfully: {output_tbl.absolute()}")
+    else:
+        print(f"Step 4: ✗ WARNING: TBL file not found at: {output_tbl.absolute()}")
     
     return {
         'index_file': index_file,
@@ -777,12 +797,18 @@ if __name__ == '__main__':
         print(f"\n==========================================")
         print(f"Processing completed successfully!")
         print(f"==========================================")
-        print(f"Index file:        {result['index_file']}")
-        print(f"Particle txt file:  {result['particle_txt_file']}")
-        print(f"TBL file:          {result['tbl_file']}")
-        print(f"Extracted {len(result['indices_1based'])} slice indices")
-        print(f"Extracted {len(result['particle_ids'])} particle IDs")
-        print(f"Extracted {len(result['particle_ids'])} particles from TBL")
+        print(f"Output directory:   {Path(args.output_dir).absolute()}")
+        print(f"")
+        print(f"Generated files:")
+        print(f"  1. Index file:        {result['index_file'].absolute()}")
+        print(f"  2. Particle txt file: {result['particle_txt_file'].absolute()}")
+        print(f"  3. TBL file:          {result['tbl_file'].absolute()}")
+        print(f"")
+        print(f"Summary:")
+        print(f"  - Extracted {len(result['indices_1based'])} unique slice indices")
+        print(f"  - Extracted {len(result['particle_ids'])} unique particle IDs")
+        print(f"  - Extracted {len(result['particle_ids'])} particles from TBL")
+        print(f"==========================================")
     
     # 如果使用extract-tbl-by-txt功能
     elif args.extract_tbl_by_txt:

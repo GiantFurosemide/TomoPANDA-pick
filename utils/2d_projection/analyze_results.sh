@@ -54,12 +54,19 @@ if [ $? -eq 0 ]; then
     echo ""
     echo "=========================================="
     echo "Success! All files saved to:"
-    echo "  $OUTPUT_DIR/"
+    echo "  $(cd "$OUTPUT_DIR" && pwd)"
     echo ""
     echo "Generated files:"
     echo "  - index.txt"
-    echo "  - $(basename "$PARTICLE_TXT" | sed 's/\(.*\)\.\(.*\)/\1.processed.\2/')"
-    echo "  - $(basename "$INPUT_TBL" | sed 's/\(.*\)\.\(.*\)/\1.processed.\2/')"
+    PARTICLE_OUTPUT=$(basename "$PARTICLE_TXT" | sed 's/\(.*\)\.\(.*\)/\1.processed.\2/')
+    TBL_OUTPUT=$(basename "$INPUT_TBL" | sed 's/\(.*\)\.\(.*\)/\1.processed.\2/')
+    echo "  - $PARTICLE_OUTPUT"
+    echo "  - $TBL_OUTPUT"
+    echo ""
+    echo "Full paths:"
+    echo "  - $(cd "$OUTPUT_DIR" && pwd)/index.txt"
+    echo "  - $(cd "$OUTPUT_DIR" && pwd)/$PARTICLE_OUTPUT"
+    echo "  - $(cd "$OUTPUT_DIR" && pwd)/$TBL_OUTPUT"
     echo "=========================================="
 else
     echo ""
