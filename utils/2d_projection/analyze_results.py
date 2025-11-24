@@ -30,6 +30,11 @@
    - 输入：txt文件（包含颗粒路径）和tbl文件
    - 输出：提取的行保存到新的tbl文件
 
+7. 完整流程整合功能：从star文件提取indices，从particle txt提取对应行，提取颗粒ID，从tbl提取对应行
+   - 输入：star文件、particle txt文件、tbl文件、输出目录
+   - 输出：在输出目录中生成index.txt、particle txt处理文件、tbl处理文件
+   - 输出文件命名：原文件名前加".processed."，如 particles.txt -> particles.processed.txt
+
 使用方法：
 
 Python API:
@@ -94,6 +99,9 @@ Python API:
     
     # 从txt文件提取颗粒ID，然后从tbl文件提取对应的行
     python utils/2d_projection/analyze_results.py --extract-tbl-by-txt -t particles.txt --tbl all_particles.tbl --output-tbl filtered_particles.tbl
+    
+    # 完整流程：从star提取indices，从particle txt提取行，提取颗粒ID，从tbl提取行
+    python utils/2d_projection/analyze_results.py --process-star-txt-tbl -s particles.star -t particles.txt --tbl all_particles.tbl --output-dir output_dir
 
 注意事项：
 - star文件中的slice index（n@x.mrcs中的n）是从1开始的（1-based）
@@ -562,6 +570,122 @@ def extract_lines_from_star_and_txt(
     return extracted_lines
 
 
+def process_star_txt_tbl(
+    star_file: Union[str, Path],
+    particle_txt_file: Union[str, Path],
+    tbl_file: Union[str, Path],
+    output_dir: Union[str, Path]
+) -> dict:
+    """
+    整合功能：从star文件提取slice indices，从particle txt提取对应行，提取颗粒ID，从tbl提取对应行。
+    
+    完整流程：
+    1. 从star文件提取slice indices（1-based）
+    2. 从particle txt文件提取对应的行（根据slice indices）
+    3. 从提取的particle txt中提取颗粒ID
+    4. 从dynamo tbl文件中提取对应的行
+    5. 保存所有结果到输出目录
+    
+    输出文件命名规则（在输出目录中）：
+    - index文件：index.txt
+    - particle txt文件：原文件名前加".processed."，如 particles.txt -> particles.processed.txt
+    - tbl文件：原文件名前加".processed."，如 all_particles.tbl -> all_particles.processed.tbl
+    
+    Parameters
+    ----------
+    star_file : str or Path
+        RELION particle star文件路径
+    particle_txt_file : str or Path
+        输入的颗粒路径txt文件，每行一个路径（格式：particle_035948.mrc）
+    tbl_file : str or Path
+        输入的Dynamo tbl文件路径
+    output_dir : str or Path
+        输出目录，所有生成的文件将保存在此目录中
+        
+    Returns
+    -------
+    dict
+        包含输出文件路径的字典：
+        - 'index_file': index.txt路径
+        - 'particle_txt_file': 处理后的particle txt文件路径
+        - 'tbl_file': 处理后的tbl文件路径
+        - 'indices_1based': 提取的1-based indices集合
+        - 'particle_ids': 提取的颗粒ID集合
+        
+    Examples
+    --------
+    >>> result = process_star_txt_tbl(
+    ...     "particles.star",
+    ...     "particles.txt",
+    ...     "all_particles.tbl",
+    ...     "output_dir"
+    ... )
+    >>> print(result['index_file'])
+    output_dir/index.txt
+    >>> print(result['particle_txt_file'])
+    output_dir/particles.processed.txt
+    >>> print(result['tbl_file'])
+    output_dir/all_particles.processed.tbl
+    """
+    star_file = Path(star_file)
+    particle_txt_file = Path(particle_txt_file)
+    tbl_file = Path(tbl_file)
+    output_dir = Path(output_dir)
+    
+    # 检查输入文件
+    if not star_file.exists():
+        raise FileNotFoundError(f"Star file not found: {star_file}")
+    if not particle_txt_file.exists():
+        raise FileNotFoundError(f"Particle txt file not found: {particle_txt_file}")
+    if not tbl_file.exists():
+        raise FileNotFoundError(f"TBL file not found: {tbl_file}")
+    
+    # 创建输出目录
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 步骤1：从star文件提取slice indices（1-based）
+    index_file = output_dir / "index.txt"
+    indices_1based = extract_slice_indices_from_star(star_file, index_file)
+    print(f"Step 1: Extracted {len(indices_1based)} unique slice indices from star file")
+    
+    # 步骤2：从particle txt文件提取对应的行
+    particle_txt_basename = particle_txt_file.stem  # 不含扩展名的文件名
+    particle_txt_ext = particle_txt_file.suffix      # 扩展名
+    output_particle_txt = output_dir / f"{particle_txt_basename}.processed{particle_txt_ext}"
+    
+    extracted_lines = extract_lines_by_indices(
+        particle_txt_file,
+        indices_1based,
+        output_particle_txt,
+        indices_are_0based=False
+    )
+    print(f"Step 2: Extracted {len(extracted_lines)} lines from particle txt file")
+    
+    # 步骤3：从提取的particle txt中提取颗粒ID
+    particle_ids = extract_particle_ids_from_txt(output_particle_txt)
+    print(f"Step 3: Extracted {len(particle_ids)} unique particle IDs")
+    
+    # 步骤4：从dynamo tbl文件中提取对应的行
+    tbl_basename = tbl_file.stem  # 不含扩展名的文件名
+    tbl_ext = tbl_file.suffix     # 扩展名
+    output_tbl = output_dir / f"{tbl_basename}.processed{tbl_ext}"
+    
+    filtered_df = filter_dynamo_tbl_by_particle_ids(
+        tbl_file,
+        particle_ids,
+        output_tbl
+    )
+    print(f"Step 4: Extracted {len(filtered_df)} particles from tbl file")
+    
+    return {
+        'index_file': index_file,
+        'particle_txt_file': output_particle_txt,
+        'tbl_file': output_tbl,
+        'indices_1based': indices_1based,
+        'particle_ids': particle_ids
+    }
+
+
 if __name__ == '__main__':
     import argparse
     
@@ -578,6 +702,9 @@ if __name__ == '__main__':
     parser.add_argument('--output-tbl', type=str, help='输出tbl文件路径')
     parser.add_argument('--extract-tbl-by-txt', action='store_true',
                        help='从txt文件提取颗粒ID，然后从tbl文件提取对应的行')
+    parser.add_argument('--output-dir', type=str, help='输出目录（用于process-star-txt-tbl功能）')
+    parser.add_argument('--process-star-txt-tbl', action='store_true',
+                       help='整合功能：从star提取indices，从particle txt提取行，提取颗粒ID，从tbl提取行')
     
     args = parser.parse_args()
     
@@ -615,6 +742,33 @@ if __name__ == '__main__':
             indices_are_0based=getattr(args, 'zero_based', False)
         )
         print(f"Extracted {len(lines)} lines to: {args.output}")
+    
+    # 如果使用process-star-txt-tbl功能（新的整合功能）
+    elif args.process_star_txt_tbl:
+        if not args.star:
+            parser.error("--process-star-txt-tbl requires --star argument")
+        if not args.txt:
+            parser.error("--process-star-txt-tbl requires --txt argument")
+        if not args.tbl:
+            parser.error("--process-star-txt-tbl requires --tbl argument")
+        if not args.output_dir:
+            parser.error("--process-star-txt-tbl requires --output-dir argument")
+        
+        result = process_star_txt_tbl(
+            args.star,
+            args.txt,
+            args.tbl,
+            args.output_dir
+        )
+        print(f"\n==========================================")
+        print(f"Processing completed successfully!")
+        print(f"==========================================")
+        print(f"Index file:        {result['index_file']}")
+        print(f"Particle txt file:  {result['particle_txt_file']}")
+        print(f"TBL file:          {result['tbl_file']}")
+        print(f"Extracted {len(result['indices_1based'])} slice indices")
+        print(f"Extracted {len(result['particle_ids'])} particle IDs")
+        print(f"Extracted {len(result['particle_ids'])} particles from TBL")
     
     # 如果使用extract-tbl-by-txt功能
     elif args.extract_tbl_by_txt:

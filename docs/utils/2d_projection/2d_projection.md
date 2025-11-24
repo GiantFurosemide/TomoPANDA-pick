@@ -424,9 +424,37 @@ python utils/2d_projection/analyze_results.py -t subtomos.txt -i 0 2 4 -o output
 
 # 从txt文件提取颗粒ID，然后从tbl文件提取对应的行
 python utils/2d_projection/analyze_results.py --extract-tbl-by-txt -t particles.txt --tbl all_particles.tbl --output-tbl filtered_particles.tbl
+
+# 完整流程：从star提取indices，从particle txt提取行，提取颗粒ID，从tbl提取行
+python utils/2d_projection/analyze_results.py --process-star-txt-tbl -s particles.star -t particles.txt --tbl all_particles.tbl --output-dir output_dir
 ```
 
-## 14.4 从颗粒路径提取ID并过滤tbl文件
+## 14.4 完整流程整合功能（推荐）
+
+这是最常用的功能，整合了所有步骤：
+
+```python
+from utils.2d_projection.analyze_results import process_star_txt_tbl
+
+result = process_star_txt_tbl(
+    "particles.star",      # 输入的star文件
+    "particles.txt",       # 输入的particle txt文件
+    "all_particles.tbl",   # 输入的Dynamo tbl文件
+    "output_dir"           # 输出目录
+)
+```
+
+**输出文件（在output_dir目录中）：**
+- `index.txt`: 0-based的slice indices
+- `particles.processed.txt`: 处理后的particle txt文件（根据star文件中的indices提取）
+- `all_particles.processed.tbl`: 处理后的tbl文件（根据提取的颗粒ID过滤）
+
+**使用bash脚本：**
+```bash
+bash utils/2d_projection/analyze_results.sh particles.star particles.txt all_particles.tbl output_dir
+```
+
+## 14.5 从颗粒路径提取ID并过滤tbl文件
 
 ```python
 from utils.2d_projection.analyze_results import (
