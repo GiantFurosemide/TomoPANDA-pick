@@ -1,113 +1,65 @@
 #!/usr/bin/env python
 """
-2D投影结果分析脚本
+2D投影结果分析脚本 - 完整流程处理
 
-提供从particle star文件中提取slice index，以及从txt文件中提取指定行的功能。
+从star文件提取slice indices，从particle txt提取对应行，提取颗粒ID，从tbl提取对应行。
 
-主要功能：
+完整流程：
 1. 从RELION particle star文件中提取所有的slice index（n值）
    - star文件中的_rlnImageName格式为：n@x.mrcs，其中n是slice index（从1开始）
-   - 可以将0-based的indices保存到txt文件（每行一个index，从0开始）
+   - 将0-based的indices保存到index.txt文件（每行一个index，从0开始）
 
-2. 从txt文件中提取指定index对应的行
-   - 支持0-based或1-based的indices
-   - 可以保存提取的行到新的txt文件
+2. 从particle txt文件提取对应的行（根据slice indices）
+   - 使用1-based indices从txt文件中提取对应行
+   - 保存为原文件名前加".processed."，如 particles.txt -> particles.processed.txt
 
-3. 整合功能：从star文件提取indices，然后从txt文件提取对应的行
-   - 输入：star文件和txt文件
-   - 输出：提取的行保存到txt文件
-   - 可选：同时保存0-based indices到单独的txt文件
-
-4. 从颗粒路径中提取颗粒ID
+3. 从提取的particle txt中提取颗粒ID
    - 从路径basename中提取颗粒ID（如particle_035948.mrc -> 35948）
-   - 支持从txt文件中批量提取所有颗粒ID
+   - 自动去掉前导零
 
-5. 从Dynamo tbl文件中提取指定颗粒ID对应的行
+4. 从Dynamo tbl文件中提取对应的行
    - tbl文件的第一列（tag列）是颗粒ID
-   - 可以匹配并提取所有与给定颗粒ID相同的行
+   - 匹配并提取所有与给定颗粒ID相同的行
+   - 保存为原文件名前加".processed."，如 all_particles.tbl -> all_particles.processed.tbl
 
-6. 整合功能：从txt文件提取颗粒ID，然后从tbl文件提取对应的行
-   - 输入：txt文件（包含颗粒路径）和tbl文件
-   - 输出：提取的行保存到新的tbl文件
-
-7. 完整流程整合功能：从star文件提取indices，从particle txt提取对应行，提取颗粒ID，从tbl提取对应行
-   - 输入：star文件、particle txt文件、tbl文件、输出目录
-   - 输出：在输出目录中生成index.txt、particle txt处理文件、tbl处理文件
-   - 输出文件命名：原文件名前加".processed."，如 particles.txt -> particles.processed.txt
+输出文件（在输出目录中）：
+- index.txt: 0-based的slice indices
+- particles.processed.txt: 处理后的particle txt文件
+- all_particles.processed.tbl: 处理后的tbl文件
 
 使用方法：
 
+命令行使用:
+    python utils/2d_projection/analyze_results.py \
+        -s particles.star \
+        -t particles.txt \
+        --tbl all_particles.tbl \
+        --output-dir output_dir
+
+或使用bash脚本:
+    bash utils/2d_projection/analyze_results.sh \
+        particles.star \
+        particles.txt \
+        all_particles.tbl \
+        output_dir
+
 Python API:
-    >>> from utils.2d_projection.analyze_results import (
-    ...     extract_slice_indices_from_star,
-    ...     extract_lines_by_indices,
-    ...     extract_lines_from_star_and_txt
-    ... )
+    >>> from utils.2d_projection.analyze_results import process_star_txt_tbl
     >>> 
-    >>> # 方法1：只提取indices并保存到文件
-    >>> indices = extract_slice_indices_from_star("particles.star", "indices.txt")
-    >>> # indices.txt 内容：每行一个0-based的index
-    >>> 
-    >>> # 方法2：从txt文件提取指定行（使用1-based indices）
-    >>> lines = extract_lines_by_indices("subtomos.txt", [1, 3, 5], "output.txt")
-    >>> 
-    >>> # 方法3：从txt文件提取指定行（使用0-based indices）
-    >>> lines = extract_lines_by_indices("subtomos.txt", [0, 2, 4], "output.txt", indices_are_0based=True)
-    >>> 
-    >>> # 方法4：整合功能 - 从star提取indices，然后从txt提取对应行
-    >>> lines = extract_lines_from_star_and_txt(
+    >>> result = process_star_txt_tbl(
     ...     "particles.star",
-    ...     "subtomos.txt", 
-    ...     "extracted_lines.txt",
-    ...     "indices.txt"  # 可选：保存indices
-    ... )
-    >>> 
-    >>> # 方法5：从txt文件提取颗粒ID
-    >>> from utils.2d_projection.analyze_results import (
-    ...     extract_particle_ids_from_txt,
-    ...     filter_dynamo_tbl_by_particle_ids,
-    ...     extract_tbl_by_particle_txt
-    ... )
-    >>> particle_ids = extract_particle_ids_from_txt("particles.txt")
-    >>> 
-    >>> # 方法6：从tbl文件提取指定颗粒ID的行
-    >>> filtered_df = filter_dynamo_tbl_by_particle_ids(
-    ...     "all_particles.tbl",
-    ...     [35948, 1234, 5678],
-    ...     "filtered_particles.tbl"
-    ... )
-    >>> 
-    >>> # 方法7：整合功能 - 从txt提取颗粒ID，然后从tbl提取对应行
-    >>> filtered_df = extract_tbl_by_particle_txt(
     ...     "particles.txt",
     ...     "all_particles.tbl",
-    ...     "filtered_particles.tbl"
+    ...     "output_dir"
     ... )
-
-命令行使用:
-    # 从star文件提取indices并保存（0-based）
-    python utils/2d_projection/analyze_results.py -s particles.star --index-file indices.txt
-    
-    # 整合功能：从star和txt提取行
-    python utils/2d_projection/analyze_results.py -s particles.star -t subtomos.txt -o output.txt --index-file indices.txt
-    
-    # 从txt文件提取指定行（使用1-based indices）
-    python utils/2d_projection/analyze_results.py -t subtomos.txt -i 1 3 5 -o output.txt
-    
-    # 从txt文件提取指定行（使用0-based indices）
-    python utils/2d_projection/analyze_results.py -t subtomos.txt -i 0 2 4 -o output.txt --zero-based
-    
-    # 从txt文件提取颗粒ID，然后从tbl文件提取对应的行
-    python utils/2d_projection/analyze_results.py --extract-tbl-by-txt -t particles.txt --tbl all_particles.tbl --output-tbl filtered_particles.tbl
-    
-    # 完整流程：从star提取indices，从particle txt提取行，提取颗粒ID，从tbl提取行
-    python utils/2d_projection/analyze_results.py --process-star-txt-tbl -s particles.star -t particles.txt --tbl all_particles.tbl --output-dir output_dir
+    >>> # 输出文件：
+    >>> # - output_dir/index.txt
+    >>> # - output_dir/particles.processed.txt
+    >>> # - output_dir/all_particles.processed.tbl
 
 注意事项：
 - star文件中的slice index（n@x.mrcs中的n）是从1开始的（1-based）
-- 保存到txt文件的indices会自动转换为0-based（n-1）
-- 从txt文件读取行时，默认使用1-based indices（与star文件对应）
-- 如果使用--zero-based参数，则使用0-based indices
+- 保存到index.txt的indices会自动转换为0-based（n-1）
 - 颗粒路径格式应为：particle_035948.mrc（particle_前缀 + 数字ID + 扩展名）
 - 颗粒ID会自动去掉前导零（如035948 -> 35948）
 - tbl文件的第一列（tag列）必须是颗粒ID

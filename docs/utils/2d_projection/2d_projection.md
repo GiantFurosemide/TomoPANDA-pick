@@ -360,78 +360,51 @@ python utils/2d_projection/main.py -i config.yaml
 
 # 14. 结果分析工具（analyze_results.py）
 
-`analyze_results.py` 提供了从 particle star 文件中提取 slice index，以及从 txt 文件中提取指定行的功能。
+`analyze_results.py` 提供完整流程处理：从star文件提取slice indices，从particle txt提取对应行，提取颗粒ID，从tbl提取对应行。
 
-## 14.1 主要功能
+## 14.1 完整流程功能
+
+整合了所有步骤的完整流程：
 
 1. **从 star 文件提取 slice indices**
    - 从 RELION particle star 文件中提取所有的 slice index（n 值）
    - star 文件中的 `_rlnImageName` 格式为：`n@x.mrcs`，其中 n 是 slice index（从 1 开始）
-   - 可以将 0-based 的 indices 保存到 txt 文件（每行一个 index，从 0 开始）
+   - 将 0-based 的 indices 保存到 `index.txt` 文件（每行一个 index，从 0 开始）
 
-2. **从 txt 文件提取指定行**
-   - 支持 0-based 或 1-based 的 indices
-   - 可以保存提取的行到新的 txt 文件
+2. **从 particle txt 文件提取对应的行**
+   - 根据提取的 slice indices 从 txt 文件中提取对应行
+   - 保存为原文件名前加".processed."，如 `particles.txt` -> `particles.processed.txt`
 
-3. **整合功能**
-   - 从 star 文件提取 indices，然后从 txt 文件提取对应的行
-   - 输入：star 文件和 txt 文件
-   - 输出：提取的行保存到 txt 文件
-   - 可选：同时保存 0-based indices 到单独的 txt 文件
+3. **从提取的 particle txt 中提取颗粒ID**
+   - 从路径basename中提取颗粒ID（如 `particle_035948.mrc` -> `35948`）
+   - 自动去掉前导零
 
-## 14.2 Python API 使用
+4. **从 Dynamo tbl 文件中提取对应的行**
+   - tbl 文件的第一列（tag列）是颗粒ID
+   - 匹配并提取所有与给定颗粒ID相同的行
+   - 保存为原文件名前加".processed."，如 `all_particles.tbl` -> `all_particles.processed.tbl`
 
-```python
-from utils.2d_projection.analyze_results import (
-    extract_slice_indices_from_star,
-    extract_lines_by_indices,
-    extract_lines_from_star_and_txt
-)
-
-# 方法1：只提取indices并保存到文件（0-based）
-indices = extract_slice_indices_from_star("particles.star", "indices.txt")
-# indices.txt 内容：每行一个0-based的index
-
-# 方法2：从txt文件提取指定行（使用1-based indices，与star文件对应）
-lines = extract_lines_by_indices("subtomos.txt", [1, 3, 5], "output.txt")
-
-# 方法3：从txt文件提取指定行（使用0-based indices）
-lines = extract_lines_by_indices("subtomos.txt", [0, 2, 4], "output.txt", indices_are_0based=True)
-
-# 方法4：整合功能 - 从star提取indices，然后从txt提取对应行
-lines = extract_lines_from_star_and_txt(
-    "particles.star",
-    "subtomos.txt", 
-    "extracted_lines.txt",
-    "indices.txt"  # 可选：保存0-based indices
-)
-```
-
-## 14.3 命令行使用
+## 14.2 命令行使用
 
 ```bash
-# 从star文件提取indices并保存（0-based）
-python utils/2d_projection/analyze_results.py -s particles.star --index-file indices.txt
-
-# 整合功能：从star和txt提取行
-python utils/2d_projection/analyze_results.py -s particles.star -t subtomos.txt -o output.txt --index-file indices.txt
-
-# 从txt文件提取指定行（使用1-based indices）
-python utils/2d_projection/analyze_results.py -t subtomos.txt -i 1 3 5 -o output.txt
-
-# 从txt文件提取指定行（使用0-based indices）
-python utils/2d_projection/analyze_results.py -t subtomos.txt -i 0 2 4 -o output.txt --zero-based
-
-# 从txt文件提取颗粒ID，然后从tbl文件提取对应的行
-python utils/2d_projection/analyze_results.py --extract-tbl-by-txt -t particles.txt --tbl all_particles.tbl --output-tbl filtered_particles.tbl
-
-# 完整流程：从star提取indices，从particle txt提取行，提取颗粒ID，从tbl提取行
-python utils/2d_projection/analyze_results.py --process-star-txt-tbl -s particles.star -t particles.txt --tbl all_particles.tbl --output-dir output_dir
+python utils/2d_projection/analyze_results.py \
+    -s particles.star \
+    -t particles.txt \
+    --tbl all_particles.tbl \
+    --output-dir output_dir
 ```
 
-## 14.4 完整流程整合功能（推荐）
+## 14.3 使用bash脚本（推荐）
 
-这是最常用的功能，整合了所有步骤：
+```bash
+bash utils/2d_projection/analyze_results.sh \
+    particles.star \
+    particles.txt \
+    all_particles.tbl \
+    output_dir
+```
+
+## 14.4 Python API 使用
 
 ```python
 from utils.2d_projection.analyze_results import process_star_txt_tbl
@@ -448,39 +421,6 @@ result = process_star_txt_tbl(
 - `index.txt`: 0-based的slice indices
 - `particles.processed.txt`: 处理后的particle txt文件（根据star文件中的indices提取）
 - `all_particles.processed.tbl`: 处理后的tbl文件（根据提取的颗粒ID过滤）
-
-**使用bash脚本：**
-```bash
-bash utils/2d_projection/analyze_results.sh particles.star particles.txt all_particles.tbl output_dir
-```
-
-## 14.5 从颗粒路径提取ID并过滤tbl文件
-
-```python
-from utils.2d_projection.analyze_results import (
-    extract_particle_ids_from_txt,
-    filter_dynamo_tbl_by_particle_ids,
-    extract_tbl_by_particle_txt
-)
-
-# 方法1：从txt文件提取颗粒ID
-particle_ids = extract_particle_ids_from_txt("particles.txt")
-# 颗粒路径格式：particle_035948.mrc -> 提取出 35948（去掉前导零）
-
-# 方法2：从tbl文件提取指定颗粒ID的行
-filtered_df = filter_dynamo_tbl_by_particle_ids(
-    "all_particles.tbl",
-    [35948, 1234, 5678],
-    "filtered_particles.tbl"
-)
-
-# 方法3：整合功能 - 从txt提取颗粒ID，然后从tbl提取对应行
-filtered_df = extract_tbl_by_particle_txt(
-    "particles.txt",
-    "all_particles.tbl",
-    "filtered_particles.tbl"
-)
-```
 
 ## 14.5 注意事项
 
