@@ -355,3 +355,77 @@ python utils/2d_projection/main.py -i config.yaml
    ```
 3. 在 cryoSPARC 中：Import particles (RELION 3 STAR)
 4. 在每个 ori_k 中，用 `relion_display --i proj_ori_k.mrcs` 验证 slice 顺序
+
+---
+
+# 14. 结果分析工具（analyze_results.py）
+
+`analyze_results.py` 提供了从 particle star 文件中提取 slice index，以及从 txt 文件中提取指定行的功能。
+
+## 14.1 主要功能
+
+1. **从 star 文件提取 slice indices**
+   - 从 RELION particle star 文件中提取所有的 slice index（n 值）
+   - star 文件中的 `_rlnImageName` 格式为：`n@x.mrcs`，其中 n 是 slice index（从 1 开始）
+   - 可以将 0-based 的 indices 保存到 txt 文件（每行一个 index，从 0 开始）
+
+2. **从 txt 文件提取指定行**
+   - 支持 0-based 或 1-based 的 indices
+   - 可以保存提取的行到新的 txt 文件
+
+3. **整合功能**
+   - 从 star 文件提取 indices，然后从 txt 文件提取对应的行
+   - 输入：star 文件和 txt 文件
+   - 输出：提取的行保存到 txt 文件
+   - 可选：同时保存 0-based indices 到单独的 txt 文件
+
+## 14.2 Python API 使用
+
+```python
+from utils.2d_projection.analyze_results import (
+    extract_slice_indices_from_star,
+    extract_lines_by_indices,
+    extract_lines_from_star_and_txt
+)
+
+# 方法1：只提取indices并保存到文件（0-based）
+indices = extract_slice_indices_from_star("particles.star", "indices.txt")
+# indices.txt 内容：每行一个0-based的index
+
+# 方法2：从txt文件提取指定行（使用1-based indices，与star文件对应）
+lines = extract_lines_by_indices("subtomos.txt", [1, 3, 5], "output.txt")
+
+# 方法3：从txt文件提取指定行（使用0-based indices）
+lines = extract_lines_by_indices("subtomos.txt", [0, 2, 4], "output.txt", indices_are_0based=True)
+
+# 方法4：整合功能 - 从star提取indices，然后从txt提取对应行
+lines = extract_lines_from_star_and_txt(
+    "particles.star",
+    "subtomos.txt", 
+    "extracted_lines.txt",
+    "indices.txt"  # 可选：保存0-based indices
+)
+```
+
+## 14.3 命令行使用
+
+```bash
+# 从star文件提取indices并保存（0-based）
+python utils/2d_projection/analyze_results.py -s particles.star --index-file indices.txt
+
+# 整合功能：从star和txt提取行
+python utils/2d_projection/analyze_results.py -s particles.star -t subtomos.txt -o output.txt --index-file indices.txt
+
+# 从txt文件提取指定行（使用1-based indices）
+python utils/2d_projection/analyze_results.py -t subtomos.txt -i 1 3 5 -o output.txt
+
+# 从txt文件提取指定行（使用0-based indices）
+python utils/2d_projection/analyze_results.py -t subtomos.txt -i 0 2 4 -o output.txt --zero-based
+```
+
+## 14.4 注意事项
+
+- star 文件中的 slice index（`n@x.mrcs` 中的 `n`）是从 1 开始的（1-based）
+- 保存到 txt 文件的 indices 会自动转换为 0-based（n-1）
+- 从 txt 文件读取行时，默认使用 1-based indices（与 star 文件对应）
+- 如果使用 `--zero-based` 参数，则使用 0-based indices

@@ -17,16 +17,74 @@
   - 读取 YAML 配置
   - 生成投影栈
   - 输出 RELION 3 格式的 star 文件
+- `analyze_results.py`: 结果分析脚本
+
+  - `extract_slice_indices_from_star()`: 从 RELION particle star 文件中提取所有的 slice index
+  - `extract_lines_by_indices()`: 从 txt 文件中提取指定 index 对应的行
+  - `extract_lines_from_star_and_txt()`: 整合功能，从 star 文件提取 indices，然后从 txt 文件提取对应的行
 - `example_config.yaml`: 示例配置文件
 
 ## 使用方法
 
-## for single useage
+### 生成2D投影
 
 ```bash
 # for single useage
 python utils/2d_projection/main.py -i config.yaml
 ```
+
+### 分析投影结果
+
+`analyze_results.py` 提供了从 particle star 文件中提取 slice index，以及从 txt 文件中提取指定行的功能。
+
+#### Python API 使用
+
+```python
+from utils.2d_projection.analyze_results import (
+    extract_slice_indices_from_star,
+    extract_lines_by_indices,
+    extract_lines_from_star_and_txt
+)
+
+# 方法1：只提取indices并保存到文件（0-based）
+indices = extract_slice_indices_from_star("particles.star", "indices.txt")
+
+# 方法2：从txt文件提取指定行（使用1-based indices，与star文件对应）
+lines = extract_lines_by_indices("subtomos.txt", [1, 3, 5], "output.txt")
+
+# 方法3：从txt文件提取指定行（使用0-based indices）
+lines = extract_lines_by_indices("subtomos.txt", [0, 2, 4], "output.txt", indices_are_0based=True)
+
+# 方法4：整合功能 - 从star提取indices，然后从txt提取对应行
+lines = extract_lines_from_star_and_txt(
+    "particles.star",
+    "subtomos.txt", 
+    "extracted_lines.txt",
+    "indices.txt"  # 可选：保存0-based indices
+)
+```
+
+#### 命令行使用
+
+```bash
+# 从star文件提取indices并保存（0-based）
+python utils/2d_projection/analyze_results.py -s particles.star --index-file indices.txt
+
+# 整合功能：从star和txt提取行
+python utils/2d_projection/analyze_results.py -s particles.star -t subtomos.txt -o output.txt --index-file indices.txt
+
+# 从txt文件提取指定行（使用1-based indices）
+python utils/2d_projection/analyze_results.py -t subtomos.txt -i 1 3 5 -o output.txt
+
+# 从txt文件提取指定行（使用0-based indices）
+python utils/2d_projection/analyze_results.py -t subtomos.txt -i 0 2 4 -o output.txt --zero-based
+```
+
+**注意事项：**
+- star 文件中的 slice index（`n@x.mrcs` 中的 `n`）是从 1 开始的（1-based）
+- 保存到 txt 文件的 indices 会自动转换为 0-based（n-1）
+- 从 txt 文件读取行时，默认使用 1-based indices（与 star 文件对应）
+- 如果使用 `--zero-based` 参数，则使用 0-based indices
 
 ## full workflow
 
