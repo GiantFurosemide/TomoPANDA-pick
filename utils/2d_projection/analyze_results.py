@@ -159,34 +159,48 @@ def extract_slice_indices_from_star(
     if not star_file.exists():
         raise FileNotFoundError(f"Star file not found: {star_file}")
     
-    # 读取star文件
-    star_data = starfile.read(star_file)
+    # 读取star文件（使用always_dict=False，参考io_dynamo.py的实现）
+    star_data = starfile.read(star_file, always_dict=False)
     
     # 如果star文件包含多个block（如optics和particles），取particles block
+    particles_df = None
     if isinstance(star_data, dict):
+        # If dict, look for particles and optics blocks
         if 'particles' in star_data:
             particles_df = star_data['particles']
-        elif 'data_particles' in star_data:
-            particles_df = star_data['data_particles']
+        elif len(star_data) > 0:
+            # Get first DataFrame value as particles
+            df_candidates = [v for v in star_data.values() if isinstance(v, pd.DataFrame)]
+            if len(df_candidates) > 0:
+                particles_df = df_candidates[0]
+            else:
+                raise ValueError(f"Could not find DataFrame in STAR file dict: {star_file}")
         else:
-            # 尝试找到包含_rlnImageName的DataFrame
-            particles_df = None
-            for key, df in star_data.items():
-                if isinstance(df, starfile.DataFrame) and '_rlnImageName' in df.columns:
-                    particles_df = df
-                    break
-            if particles_df is None:
-                raise ValueError("Could not find particles block in star file")
-    else:
+            raise ValueError(f"Could not find particle data block in STAR file: {star_file}")
+    elif isinstance(star_data, pd.DataFrame):
         particles_df = star_data
+    else:
+        raise ValueError(f"Unexpected data type from starfile.read: {type(star_data)}")
     
-    # 检查是否有_rlnImageName列
-    if '_rlnImageName' not in particles_df.columns:
-        raise ValueError("Star file does not contain '_rlnImageName' column")
+    # 检查列名（starfile可能返回带或不带下划线的列名）
+    # 尝试两种可能的列名格式：rlnImageName 或 _rlnImageName
+    image_name_col = None
+    for col_name in ['rlnImageName', '_rlnImageName']:
+        if col_name in particles_df.columns:
+            image_name_col = col_name
+            break
+    
+    if image_name_col is None:
+        # 打印所有可用的列名以便调试
+        available_cols = list(particles_df.columns)
+        raise ValueError(
+            f"Star file does not contain 'rlnImageName' or '_rlnImageName' column. "
+            f"Available columns: {available_cols}"
+        )
     
     # 提取所有的slice index（1-based）
     slice_indices = set()
-    for image_name in particles_df['_rlnImageName']:
+    for image_name in particles_df[image_name_col]:
         # 格式：n@x.mrcs
         if '@' in str(image_name):
             n_str = str(image_name).split('@')[0]
