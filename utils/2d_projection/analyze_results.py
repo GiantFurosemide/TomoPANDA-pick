@@ -213,13 +213,19 @@ def extract_slice_indices_from_star(
     
     # 如果指定了输出文件，保存0-based的indices
     if output_index_file is not None:
-        output_index_file = Path(output_index_file)
+        output_index_file = Path(output_index_file).resolve()  # 转换为绝对路径
         output_index_file.parent.mkdir(parents=True, exist_ok=True)
         # 转换为0-based并排序
         indices_0based = sorted([n - 1 for n in slice_indices])
+        print(f"DEBUG: Writing index file to: {output_index_file}")
         with open(output_index_file, 'w', encoding='utf-8') as f:
             for idx in indices_0based:
                 f.write(f"{idx}\n")
+        # 验证文件是否真的被写入
+        if output_index_file.exists():
+            print(f"DEBUG: Index file successfully written: {output_index_file}")
+        else:
+            print(f"DEBUG: ERROR - Index file not found after writing: {output_index_file}")
     
     return slice_indices
 
@@ -285,11 +291,17 @@ def extract_lines_by_indices(
     
     # 如果指定了输出文件，写入文件
     if output_file is not None:
-        output_file = Path(output_file)
+        output_file = Path(output_file).resolve()  # 转换为绝对路径
         output_file.parent.mkdir(parents=True, exist_ok=True)
+        print(f"DEBUG: Writing output file to: {output_file}")
         with open(output_file, 'w', encoding='utf-8') as f:
             for line in extracted_lines:
                 f.write(line + '\n')
+        # 验证文件是否真的被写入
+        if output_file.exists():
+            print(f"DEBUG: Output file successfully written: {output_file}")
+        else:
+            print(f"DEBUG: ERROR - Output file not found after writing: {output_file}")
     
     return extracted_lines
 
@@ -389,8 +401,9 @@ def _write_dynamo_tbl_from_df(df: pd.DataFrame, output_path: Union[str, Path]):
     output_path : str or Path
         输出tbl文件路径
     """
-    output_path = Path(output_path)
+    output_path = Path(output_path).resolve()  # 转换为绝对路径
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"DEBUG: Writing TBL file to: {output_path}")
     
     # 1-based integer columns per Dynamo convention
     int_cols_1_based = {1, 2, 3, 13, 20, 21, 22, 23, 31, 32, 34, 35}
@@ -421,6 +434,12 @@ def _write_dynamo_tbl_from_df(df: pd.DataFrame, output_path: Union[str, Path]):
                         # 使用general format避免尾随零
                         parts.append(format(float(value), '.6g'))
             fh.write(' '.join(parts) + '\n')
+    
+    # 验证文件是否真的被写入
+    if output_path.exists():
+        print(f"DEBUG: TBL file successfully written: {output_path}")
+    else:
+        print(f"DEBUG: ERROR - TBL file not found after writing: {output_path}")
 
 
 def filter_dynamo_tbl_by_particle_ids(
