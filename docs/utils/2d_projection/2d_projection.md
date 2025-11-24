@@ -421,11 +421,45 @@ python utils/2d_projection/analyze_results.py -t subtomos.txt -i 1 3 5 -o output
 
 # 从txt文件提取指定行（使用0-based indices）
 python utils/2d_projection/analyze_results.py -t subtomos.txt -i 0 2 4 -o output.txt --zero-based
+
+# 从txt文件提取颗粒ID，然后从tbl文件提取对应的行
+python utils/2d_projection/analyze_results.py --extract-tbl-by-txt -t particles.txt --tbl all_particles.tbl --output-tbl filtered_particles.tbl
 ```
 
-## 14.4 注意事项
+## 14.4 从颗粒路径提取ID并过滤tbl文件
+
+```python
+from utils.2d_projection.analyze_results import (
+    extract_particle_ids_from_txt,
+    filter_dynamo_tbl_by_particle_ids,
+    extract_tbl_by_particle_txt
+)
+
+# 方法1：从txt文件提取颗粒ID
+particle_ids = extract_particle_ids_from_txt("particles.txt")
+# 颗粒路径格式：particle_035948.mrc -> 提取出 35948（去掉前导零）
+
+# 方法2：从tbl文件提取指定颗粒ID的行
+filtered_df = filter_dynamo_tbl_by_particle_ids(
+    "all_particles.tbl",
+    [35948, 1234, 5678],
+    "filtered_particles.tbl"
+)
+
+# 方法3：整合功能 - 从txt提取颗粒ID，然后从tbl提取对应行
+filtered_df = extract_tbl_by_particle_txt(
+    "particles.txt",
+    "all_particles.tbl",
+    "filtered_particles.tbl"
+)
+```
+
+## 14.5 注意事项
 
 - star 文件中的 slice index（`n@x.mrcs` 中的 `n`）是从 1 开始的（1-based）
 - 保存到 txt 文件的 indices 会自动转换为 0-based（n-1）
 - 从 txt 文件读取行时，默认使用 1-based indices（与 star 文件对应）
 - 如果使用 `--zero-based` 参数，则使用 0-based indices
+- 颗粒路径格式应为：`particle_035948.mrc`（particle_前缀 + 数字ID + 扩展名）
+- 颗粒ID会自动去掉前导零（如035948 -> 35948）
+- tbl 文件的第一列（tag列）必须是颗粒ID

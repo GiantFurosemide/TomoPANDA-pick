@@ -18,6 +18,18 @@
    - 输出：提取的行保存到txt文件
    - 可选：同时保存0-based indices到单独的txt文件
 
+4. 从颗粒路径中提取颗粒ID
+   - 从路径basename中提取颗粒ID（如particle_035948.mrc -> 35948）
+   - 支持从txt文件中批量提取所有颗粒ID
+
+5. 从Dynamo tbl文件中提取指定颗粒ID对应的行
+   - tbl文件的第一列（tag列）是颗粒ID
+   - 可以匹配并提取所有与给定颗粒ID相同的行
+
+6. 整合功能：从txt文件提取颗粒ID，然后从tbl文件提取对应的行
+   - 输入：txt文件（包含颗粒路径）和tbl文件
+   - 输出：提取的行保存到新的tbl文件
+
 使用方法：
 
 Python API:
@@ -44,6 +56,28 @@ Python API:
     ...     "extracted_lines.txt",
     ...     "indices.txt"  # 可选：保存indices
     ... )
+    >>> 
+    >>> # 方法5：从txt文件提取颗粒ID
+    >>> from utils.2d_projection.analyze_results import (
+    ...     extract_particle_ids_from_txt,
+    ...     filter_dynamo_tbl_by_particle_ids,
+    ...     extract_tbl_by_particle_txt
+    ... )
+    >>> particle_ids = extract_particle_ids_from_txt("particles.txt")
+    >>> 
+    >>> # 方法6：从tbl文件提取指定颗粒ID的行
+    >>> filtered_df = filter_dynamo_tbl_by_particle_ids(
+    ...     "all_particles.tbl",
+    ...     [35948, 1234, 5678],
+    ...     "filtered_particles.tbl"
+    ... )
+    >>> 
+    >>> # 方法7：整合功能 - 从txt提取颗粒ID，然后从tbl提取对应行
+    >>> filtered_df = extract_tbl_by_particle_txt(
+    ...     "particles.txt",
+    ...     "all_particles.tbl",
+    ...     "filtered_particles.tbl"
+    ... )
 
 命令行使用:
     # 从star文件提取indices并保存（0-based）
@@ -57,17 +91,32 @@ Python API:
     
     # 从txt文件提取指定行（使用0-based indices）
     python utils/2d_projection/analyze_results.py -t subtomos.txt -i 0 2 4 -o output.txt --zero-based
+    
+    # 从txt文件提取颗粒ID，然后从tbl文件提取对应的行
+    python utils/2d_projection/analyze_results.py --extract-tbl-by-txt -t particles.txt --tbl all_particles.tbl --output-tbl filtered_particles.tbl
 
 注意事项：
 - star文件中的slice index（n@x.mrcs中的n）是从1开始的（1-based）
 - 保存到txt文件的indices会自动转换为0-based（n-1）
 - 从txt文件读取行时，默认使用1-based indices（与star文件对应）
 - 如果使用--zero-based参数，则使用0-based indices
+- 颗粒路径格式应为：particle_035948.mrc（particle_前缀 + 数字ID + 扩展名）
+- 颗粒ID会自动去掉前导零（如035948 -> 35948）
+- tbl文件的第一列（tag列）必须是颗粒ID
 """
 
 import starfile
+import os
+import sys
+import numpy as np
+import pandas as pd
 from pathlib import Path
 from typing import Set, List, Union
+
+# 导入io_dynamo模块
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+sys.path.insert(0, project_root)
+from utils.io_dynamo import read_dynamo_tbl, COLUMNS_NAME
 
 
 def extract_slice_indices_from_star(
@@ -223,6 +272,246 @@ def extract_lines_by_indices(
     return extracted_lines
 
 
+def extract_particle_id_from_path(particle_path: str) -> int:
+    """
+    从颗粒路径的basename中提取颗粒ID。
+    
+    路径格式：particle_035948.mrc -> 提取出 35948（去掉前导零）
+    
+    Parameters
+    ----------
+    particle_path : str
+        颗粒文件路径，如 "/path/to/particle_035948.mrc"
+        
+    Returns
+    -------
+    int
+        颗粒ID，如 35948
+        
+    Examples
+    --------
+    >>> extract_particle_id_from_path("/data/particle_035948.mrc")
+    35948
+    >>> extract_particle_id_from_path("particle_001234.mrc")
+    1234
+    """
+    basename = os.path.basename(particle_path)
+    # 移除扩展名
+    name_without_ext = os.path.splitext(basename)[0]
+    
+    # 提取particle_后面的数字部分
+    if name_without_ext.startswith('particle_'):
+        id_str = name_without_ext[len('particle_'):]
+        try:
+            # 转换为整数，自动去掉前导零
+            particle_id = int(id_str)
+            return particle_id
+        except ValueError:
+            raise ValueError(f"Could not extract particle ID from path: {particle_path}")
+    else:
+        raise ValueError(f"Path basename does not start with 'particle_': {basename}")
+
+
+def extract_particle_ids_from_txt(txt_file: Union[str, Path]) -> Set[int]:
+    """
+    从txt文件中提取所有颗粒ID。
+    
+    txt文件中每行是一个颗粒路径，格式如：particle_035948.mrc
+    
+    Parameters
+    ----------
+    txt_file : str or Path
+        包含颗粒路径的txt文件，每行一个路径
+        
+    Returns
+    -------
+    Set[int]
+        所有唯一的颗粒ID集合
+        
+    Examples
+    --------
+    >>> ids = extract_particle_ids_from_txt("particles.txt")
+    >>> print(ids)
+    {35948, 1234, 5678, ...}
+    """
+    txt_file = Path(txt_file)
+    if not txt_file.exists():
+        raise FileNotFoundError(f"Text file not found: {txt_file}")
+    
+    particle_ids = set()
+    with open(txt_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            try:
+                particle_id = extract_particle_id_from_path(line)
+                particle_ids.add(particle_id)
+            except ValueError as e:
+                print(f"Warning: {e}, skipping line: {line}")
+                continue
+    
+    return particle_ids
+
+
+def _write_dynamo_tbl_from_df(df: pd.DataFrame, output_path: Union[str, Path]):
+    """
+    将DataFrame写回Dynamo格式的tbl文件。
+    
+    这是一个内部辅助函数，用于将DataFrame转换回原始tbl格式。
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        包含Dynamo表数据的DataFrame
+    output_path : str or Path
+        输出tbl文件路径
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # 1-based integer columns per Dynamo convention
+    int_cols_1_based = {1, 2, 3, 13, 20, 21, 22, 23, 31, 32, 34, 35}
+    
+    # 获取列名对应的列索引（1-based）
+    col_to_idx = {}
+    for i, col_name in enumerate(df.columns, start=1):
+        col_to_idx[col_name] = i
+    
+    with open(output_path, 'w') as fh:
+        for _, row in df.iterrows():
+            parts = []
+            for col_name in df.columns:
+                value = row[col_name]
+                col_idx = col_to_idx[col_name]
+                
+                if col_idx in int_cols_1_based:
+                    # 整数列
+                    if pd.isna(value):
+                        parts.append('0')
+                    else:
+                        parts.append(str(int(round(value))))
+                else:
+                    # 浮点数列
+                    if pd.isna(value):
+                        parts.append('0')
+                    else:
+                        # 使用general format避免尾随零
+                        parts.append(format(float(value), '.6g'))
+            fh.write(' '.join(parts) + '\n')
+
+
+def filter_dynamo_tbl_by_particle_ids(
+    tbl_file: Union[str, Path],
+    particle_ids: Union[List[int], Set[int]],
+    output_tbl_file: Union[str, Path]
+) -> pd.DataFrame:
+    """
+    从Dynamo tbl文件中提取指定颗粒ID对应的行。
+    
+    tbl文件的第一列（tag列）是颗粒ID，函数会匹配所有与给定颗粒ID相同的行。
+    
+    Parameters
+    ----------
+    tbl_file : str or Path
+        输入的Dynamo tbl文件路径
+    particle_ids : List[int] or Set[int]
+        要提取的颗粒ID列表
+    output_tbl_file : str or Path
+        输出的tbl文件路径
+        
+    Returns
+    -------
+    pd.DataFrame
+        过滤后的DataFrame，包含匹配的行
+        
+    Examples
+    --------
+    >>> filtered_df = filter_dynamo_tbl_by_particle_ids(
+    ...     "particles.tbl",
+    ...     [35948, 1234, 5678],
+    ...     "filtered_particles.tbl"
+    ... )
+    """
+    tbl_file = Path(tbl_file)
+    if not tbl_file.exists():
+        raise FileNotFoundError(f"TBL file not found: {tbl_file}")
+    
+    # 读取tbl文件
+    df = read_dynamo_tbl(tbl_file)
+    
+    # 检查是否有tag列（第一列，颗粒ID）
+    if 'tag' not in df.columns:
+        raise ValueError("TBL file does not contain 'tag' column (first column)")
+    
+    # 将particle_ids转换为set
+    particle_ids_set = set(particle_ids)
+    
+    # 过滤DataFrame：只保留tag列在particle_ids_set中的行
+    filtered_df = df[df['tag'].isin(particle_ids_set)].copy()
+    
+    if len(filtered_df) == 0:
+        print(f"Warning: No matching particles found in TBL file. Requested IDs: {sorted(particle_ids_set)}")
+    else:
+        print(f"Found {len(filtered_df)} matching particles out of {len(df)} total particles")
+        # 检查是否有缺失的ID
+        found_ids = set(filtered_df['tag'].unique())
+        missing_ids = particle_ids_set - found_ids
+        if missing_ids:
+            print(f"Warning: {len(missing_ids)} particle IDs not found in TBL file: {sorted(missing_ids)[:10]}...")
+    
+    # 写入新的tbl文件
+    _write_dynamo_tbl_from_df(filtered_df, output_tbl_file)
+    
+    return filtered_df
+
+
+def extract_tbl_by_particle_txt(
+    txt_file: Union[str, Path],
+    tbl_file: Union[str, Path],
+    output_tbl_file: Union[str, Path]
+) -> pd.DataFrame:
+    """
+    整合功能：从txt文件中提取颗粒ID，然后从tbl文件中提取对应的行。
+    
+    这个函数整合了extract_particle_ids_from_txt和filter_dynamo_tbl_by_particle_ids的功能。
+    
+    Parameters
+    ----------
+    txt_file : str or Path
+        包含颗粒路径的txt文件，每行一个路径（格式：particle_035948.mrc）
+    tbl_file : str or Path
+        输入的Dynamo tbl文件路径
+    output_tbl_file : str or Path
+        输出的tbl文件路径
+        
+    Returns
+    -------
+    pd.DataFrame
+        过滤后的DataFrame，包含匹配的行
+        
+    Examples
+    --------
+    >>> filtered_df = extract_tbl_by_particle_txt(
+    ...     "particles.txt",
+    ...     "all_particles.tbl",
+    ...     "filtered_particles.tbl"
+    ... )
+    """
+    # 从txt文件提取颗粒ID
+    particle_ids = extract_particle_ids_from_txt(txt_file)
+    print(f"Extracted {len(particle_ids)} unique particle IDs from txt file")
+    
+    # 从tbl文件提取对应的行
+    filtered_df = filter_dynamo_tbl_by_particle_ids(
+        tbl_file,
+        particle_ids,
+        output_tbl_file
+    )
+    
+    return filtered_df
+
+
 def extract_lines_from_star_and_txt(
     star_file: Union[str, Path],
     txt_file: Union[str, Path],
@@ -285,6 +574,10 @@ if __name__ == '__main__':
     parser.add_argument('--index-file', type=str, help='保存0-based indices的txt文件路径')
     parser.add_argument('--zero-based', '--0based', dest='zero_based', action='store_true', 
                        help='indices是0-based的（仅在使用-i参数时有效）')
+    parser.add_argument('--tbl', type=str, help='输入Dynamo tbl文件路径')
+    parser.add_argument('--output-tbl', type=str, help='输出tbl文件路径')
+    parser.add_argument('--extract-tbl-by-txt', action='store_true',
+                       help='从txt文件提取颗粒ID，然后从tbl文件提取对应的行')
     
     args = parser.parse_args()
     
@@ -322,6 +615,26 @@ if __name__ == '__main__':
             indices_are_0based=getattr(args, 'zero_based', False)
         )
         print(f"Extracted {len(lines)} lines to: {args.output}")
+    
+    # 如果使用extract-tbl-by-txt功能
+    elif args.extract_tbl_by_txt:
+        if not args.txt:
+            parser.error("--extract-tbl-by-txt requires --txt argument")
+        if not args.tbl:
+            parser.error("--extract-tbl-by-txt requires --tbl argument")
+        if not args.output_tbl:
+            args.output_tbl = str(Path(args.tbl).parent / f"{Path(args.tbl).stem}_filtered.tbl")
+        
+        filtered_df = extract_tbl_by_particle_txt(
+            args.txt,
+            args.tbl,
+            args.output_tbl
+        )
+        print(f"Extracted {len(filtered_df)} particles to: {args.output_tbl}")
+    
+    # 如果只提供了txt和tbl，但没有使用extract-tbl-by-txt标志，给出提示
+    elif args.txt and args.tbl:
+        parser.error("Use --extract-tbl-by-txt flag to extract tbl rows by particle IDs from txt file")
     
     else:
         parser.print_help()
