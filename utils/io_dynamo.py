@@ -623,3 +623,116 @@ def save_sorted_vll_by_tomonames(tomo_names:list, vll_df:pd.DataFrame, output_vl
         for p in sorted_paths:
             f.write(p + '\n')
     print(f"Saved vll file sorted by tomo_names to: {output_vll_path}")
+
+
+def dynamo_tbl_vll_to_relion_star(
+    tbl_path,
+    vll_path=None,
+    output_file='particles.star',
+    bin_scalar=8.0,
+    pixel_size=None,
+    tomogram_size=None,
+    output_centered=True
+):
+    """
+    将 Dynamo 的 .tbl 文件和可选的 .vll 文件转换为 RELION 格式的 .star 文件。
+    
+    该函数整合了读取、转换和写入的完整流程：
+    1. 读取 Dynamo .tbl 文件（如果提供了 .vll 文件，会映射 tomogram 名称）
+    2. 将 Dynamo 格式转换为 RELION 格式（包括坐标系统和欧拉角转换）
+    3. 写入 RELION .star 文件
+    
+    IMPORTANT COORDINATE SYSTEM NOTES:
+    - Dynamo's x/y/z (columns 24-26) are ABSOLUTE coordinates from the origin,
+      in pixel units (typically binned).
+    - RELION's rlnCenteredCoordinateXAngst/Y/Z are coordinates RELATIVE TO THE
+      TOMOGRAM CENTER, in Angstrom units.
+    
+    If output_centered=True (default), conversion process:
+    1. Get absolute coordinates from Dynamo table (multiply by bin_scalar if needed)
+    2. Convert to centered coordinates: centered = absolute - (tomogram_size / 2)
+    3. Convert to Angstrom: centered_angstrom = centered_pixels * pixel_size
+    
+    If output_centered=False, outputs rlnCoordinateX/Y/Z (absolute coordinates in pixels).
+    
+    Parameters
+    ----------
+    tbl_path : str
+        Path to Dynamo .tbl file (ASCII format).
+    vll_path : str or None, optional
+        Optional path to .vll file containing tomogram paths.
+        If provided, tomogram IDs in the .tbl file will be mapped to micrograph names.
+    output_file : str, optional
+        Path to output RELION .star file. Defaults to 'particles.star'.
+    bin_scalar : float, optional
+        Scalar to multiply coordinates. Default is 8.0 for 8x8x8 binning.
+        This converts binned coordinates to unbinned pixel coordinates.
+    pixel_size : float or None, optional
+        Pixel size in Angstrom. Required if output_centered=True.
+        Used to convert pixel coordinates to Angstrom.
+    tomogram_size : tuple or array-like of shape (3,) or None, optional
+        Tomogram dimensions as (size_x, size_y, size_z) in UNBINNED pixels.
+        Required if output_centered=True. This should be the size AFTER applying bin_scalar.
+    output_centered : bool, optional
+        If True (default), output rlnCenteredCoordinateXAngst/Y/Z (relative to center, in Angstrom).
+        If False, output rlnCoordinateX/Y/Z (absolute, in pixels).
+    
+    Returns
+    -------
+    pandas.DataFrame
+        RELION-style DataFrame containing the converted particle data.
+        The .star file is also written to disk.
+    
+    Examples
+    --------
+    >>> # Basic conversion with centered coordinates (requires pixel_size and tomogram_size)
+    >>> df = dynamo_tbl_vll_to_relion_star(
+    ...     'particles.tbl',
+    ...     vll_path='tomograms.vll',
+    ...     output_file='particles.star',
+    ...     bin_scalar=8.0,
+    ...     pixel_size=1.32,
+    ...     tomogram_size=(512, 512, 200)
+    ... )
+    >>> 
+    >>> # Conversion without vll file (uses numeric tomogram IDs)
+    >>> df = dynamo_tbl_vll_to_relion_star(
+    ...     'particles.tbl',
+    ...     output_file='particles.star',
+    ...     bin_scalar=8.0,
+    ...     pixel_size=1.32,
+    ...     tomogram_size=(512, 512, 200)
+    ... )
+    >>> 
+    >>> # Conversion with absolute coordinates (no pixel_size or tomogram_size needed)
+    >>> df = dynamo_tbl_vll_to_relion_star(
+    ...     'particles.tbl',
+    ...     vll_path='tomograms.vll',
+    ...     output_file='particles.star',
+    ...     bin_scalar=8.0,
+    ...     output_centered=False
+    ... )
+    """
+    # Read Dynamo table (with optional vll mapping)
+    dynamo_df = read_dynamo_tbl(tbl_path, vll_path=vll_path)
+    
+    # Convert to RELION format
+    relion_df = dynamo_df_to_relion(
+        dynamo_df,
+        bin_scalar=bin_scalar,
+        pixel_size=pixel_size,
+        tomogram_size=tomogram_size,
+        output_centered=output_centered
+    )
+    
+    # Write to STAR file
+    directory = os.path.dirname(output_file)
+    if directory and not os.path.exists(directory):
+        os.makedirs(directory, exist_ok=True)
+    
+    starfile.write(relion_df, output_file)
+    
+    print(f"Converted {len(relion_df)} particles from Dynamo format to RELION format.")
+    print(f"Output written to: {output_file}")
+    
+    return relion_df
