@@ -29,11 +29,43 @@
 
 ## 使用方法
 
+### 将EM格式的subtomo转换为mrc格式
+
+拷贝covert_em2mrc至dynamo所在的文件夹
+
+并在dynamo的matlab console中运行
+
+```matlab
+convert_em2mrc('/path/to/particle_data')
+```
+
+### 生成subtomos.txt
+
+用 find 命令将 准换好的mrc 文件保存在 subtomos.txt 中
+
+```bash
+find $pwd -name "*.mrc" | sort > subtomos.txt
+```
+
+
+### relion 处理，修正mrc header
+
+用relion_image_handler修正mrc 的header。拷贝tomopanda-pick_relion.sbatch至当前文件夹。
+
+edit其中参数LIST_FILE、PIXEL_SIZE、NPROC。
+
+提交sbatch 至集群运行
+
 ### 生成2D投影
 
 ```bash
-# for single useage
+# 1. edit config.yaml file before starting
+
+## 2.1 for single useage
 python utils/2d_projection/main.py -i config.yaml
+
+## 2.2 for cluster
+sbatch tomopanda-pick_2d_projection.sbatch 
 ```
 
 ### 分析投影结果
@@ -54,6 +86,7 @@ python utils/2d_projection/analyze_results.py \
 
 ```bash
 # 使用bash脚本执行完整流程
+# bash analyze_results.sh <star_file> <particle_txt> <tbl_file> <output_dir>
 bash utils/2d_projection/analyze_results.sh \
     particles.star \
     particles.txt \
@@ -75,11 +108,13 @@ result = process_star_txt_tbl(
 ```
 
 **输出文件（在output_dir目录中）：**
+
 - `index.txt`: 0-based的slice indices
 - `particles.processed.txt`: 处理后的particle txt文件（根据star文件中的indices提取）
 - `all_particles.processed.tbl`: 处理后的tbl文件（根据提取的颗粒ID过滤）
 
 **注意事项：**
+
 - star 文件中的 slice index（`n@x.mrcs` 中的 `n`）是从 1 开始的（1-based）
 - 保存到 txt 文件的 indices 会自动转换为 0-based（n-1）
 - 从 txt 文件读取行时，默认使用 1-based indices（与 star 文件对应）
