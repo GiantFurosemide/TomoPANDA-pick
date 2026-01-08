@@ -10,3 +10,6 @@ convert_20251111.ipynb
 test_2d_projection
 notebooks/test_2d_projection
 notebooks/2d_projection*
+
+*.star
+*.ipynb
