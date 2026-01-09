@@ -12,4 +12,4 @@ notebooks/test_2d_projection
 notebooks/2d_projection*
 
 *.star
-*.ipynb
+*.tbl
