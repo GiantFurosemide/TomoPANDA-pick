@@ -412,7 +412,7 @@ def dynamo_df_to_relion(df, bin_scalar=8.0, pixel_size=None, tomogram_size=None,
     return out
 
 
-def relion_star_to_dynamo_tbl(star_path, pixel_size, tomogram_size=None, output_file='particles.tbl'):
+def relion_star_to_dynamo_tbl(star_path, pixel_size, tomogram_size=None, bin_scalar=8.0, output_file='particles.tbl'):
     """
     Read a RELION particle STAR file and convert it to a Dynamo .tbl file.
 
@@ -420,12 +420,14 @@ def relion_star_to_dynamo_tbl(star_path, pixel_size, tomogram_size=None, output_
     - RELION's rlnCenteredCoordinateXAngst/Y/Z are coordinates RELATIVE TO THE
       TOMOGRAM CENTER, in Angstrom units.
     - Dynamo's x/y/z (columns 24-26) are ABSOLUTE coordinates from the origin
-      (typically top-left corner), in pixel units.
+      (typically top-left corner), in BINNED pixel units.
     
-    Conversion process:
+    Conversion process (reverse of dynamo_df_to_relion):
     1. Convert CenteredCoordinate from Angstrom to pixels (divide by pixel_size)
-    2. Add tomogram center offset to get absolute coordinates:
-       absolute_coord = centered_coord_pixels + (tomogram_size / 2)
+    2. Add tomogram center offset to get absolute coordinates (unbinned pixels):
+       absolute_unbinned = centered_coord_pixels + (tomogram_size / 2)
+    3. Divide by bin_scalar to get binned coordinates:
+       absolute_binned = absolute_unbinned / bin_scalar
     
     If tomogram_size is not provided, the function assumes coordinates are already
     absolute (which may be incorrect if using CenteredCoordinate fields).
@@ -438,9 +440,13 @@ def relion_star_to_dynamo_tbl(star_path, pixel_size, tomogram_size=None, output_
         Pixel size in Angstrom. Coordinates in Angstrom will be divided by
         this value to convert to pixels.
     tomogram_size : tuple or array-like of shape (3,) or None, optional
-        Tomogram dimensions as (size_x, size_y, size_z) in pixels.
+        Tomogram dimensions as (size_x, size_y, size_z) in UNBINNED pixels.
         If None, conversion assumes coordinates are already absolute (not recommended).
         If provided, coordinates will be converted from centered to absolute.
+    bin_scalar : float, optional
+        Scalar to divide coordinates. Default is 8.0 for 8x8x8 binning.
+        This converts unbinned pixel coordinates to binned pixel coordinates.
+        Must match the bin_scalar used in dynamo_df_to_relion for reversibility.
     output_file : str, optional
         Path to output Dynamo .tbl file. Defaults to 'particles.tbl'.
 
@@ -454,10 +460,12 @@ def relion_star_to_dynamo_tbl(star_path, pixel_size, tomogram_size=None, output_
     --------
     >>> # With tomogram size (recommended)
     >>> df = relion_star_to_dynamo_tbl('particles.star', pixel_size=1.32, 
-    ...                                tomogram_size=(512, 512, 200), 
+    ...                                tomogram_size=(512, 512, 200),
+    ...                                bin_scalar=8.0,
     ...                                output_file='output.tbl')
     >>> # Without tomogram size (assumes absolute coordinates - may be incorrect)
-    >>> df = relion_star_to_dynamo_tbl('particles.star', pixel_size=1.32, 
+    >>> df = relion_star_to_dynamo_tbl('particles.star', pixel_size=1.32,
+    ...                                bin_scalar=8.0,
     ...                                output_file='output.tbl')
     """
     # Read RELION star file
@@ -526,8 +534,10 @@ def relion_star_to_dynamo_tbl(star_path, pixel_size, tomogram_size=None, output_
             raise ValueError(f"tomogram_size must be shape (3,), got {tomogram_size.shape}")
         # Calculate tomogram center
         tomogram_center = tomogram_size / 2.0
-        # Convert to absolute coordinates: absolute = centered + center
-        coords_pixels = coords_pixels_centered + tomogram_center
+        # Convert to absolute coordinates (unbinned pixels): absolute = centered + center
+        coords_pixels_unbinned = coords_pixels_centered + tomogram_center
+        # Convert to binned coordinates: divide by bin_scalar
+        coords_pixels = coords_pixels_unbinned / float(bin_scalar)
     else:
         # Try to get tomogram size from optics block if available
         if optics_df is not None:
@@ -538,25 +548,31 @@ def relion_star_to_dynamo_tbl(star_path, pixel_size, tomogram_size=None, output_
                     optics_df['rlnImageSizeZ'].iloc[0]
                 ])
                 tomogram_center = tomogram_size / 2.0
-                coords_pixels = coords_pixels_centered + tomogram_center
+                coords_pixels_unbinned = coords_pixels_centered + tomogram_center
+                coords_pixels = coords_pixels_unbinned / float(bin_scalar)
             else:
                 import warnings
                 warnings.warn(
                     "WARNING: tomogram_size not provided and could not be extracted from optics block. "
-                    "Assuming coordinates are already absolute. This may be INCORRECT if using "
-                    "rlnCenteredCoordinate fields. Please provide tomogram_size parameter.",
+                    "Assuming coordinates are already absolute in UNBINNED pixels. "
+                    "This may be INCORRECT if using rlnCenteredCoordinate fields. "
+                    "Please provide tomogram_size parameter.",
                     UserWarning
                 )
-                coords_pixels = coords_pixels_centered
+                # If no tomogram_size, assume coordinates are already absolute in unbinned pixels
+                # Convert to binned pixels
+                coords_pixels = coords_pixels_centered / float(bin_scalar)
         else:
             import warnings
             warnings.warn(
-                "WARNING: tomogram_size not provided. Assuming coordinates are already absolute. "
+                "WARNING: tomogram_size not provided. Assuming coordinates are already absolute in UNBINNED pixels. "
                 "This may be INCORRECT if using rlnCenteredCoordinate fields. "
                 "Please provide tomogram_size parameter.",
                 UserWarning
             )
-            coords_pixels = coords_pixels_centered
+            # If no tomogram_size, assume coordinates are already absolute in unbinned pixels
+            # Convert to binned pixels
+            coords_pixels = coords_pixels_centered / float(bin_scalar)
     
     # Extract angles (already in ZYZ convention for RELION)
     angles_zyz = np.stack([
