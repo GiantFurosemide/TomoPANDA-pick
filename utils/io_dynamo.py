@@ -292,7 +292,7 @@ def read_dynamo_tbl(tbl_path, vll_path=None):
     return df
 
 
-def dynamo_df_to_relion(df, bin_scalar=8.0, pixel_size=None, tomogram_size=None, output_centered=True):
+def dynamo_df_to_relion(df, pixel_size=None, tomogram_size=None, output_centered=True):
     """
     Transform a DataFrame from read_dynamo_tbl into a RELION-like DataFrame.
     
@@ -336,10 +336,7 @@ def dynamo_df_to_relion(df, bin_scalar=8.0, pixel_size=None, tomogram_size=None,
     y_binned = df['y'] if 'y' in df.columns else df[COLUMNS_NAME.get(25, 'y')]
     z_binned = df['z'] if 'z' in df.columns else df[COLUMNS_NAME.get(26, 'z')]
     
-    # Convert to unbinned pixel coordinates
-    x_unbinned = x_binned * float(bin_scalar)
-    y_unbinned = y_binned * float(bin_scalar)
-    z_unbinned = z_binned * float(bin_scalar)
+
     
     # Convert to centered coordinates if requested
     if output_centered:
@@ -356,9 +353,9 @@ def dynamo_df_to_relion(df, bin_scalar=8.0, pixel_size=None, tomogram_size=None,
         tomogram_center = tomogram_size / 2.0
         
         # Convert absolute to centered coordinates
-        x_centered_pixels = x_unbinned.values - tomogram_center[0]
-        y_centered_pixels = y_unbinned.values - tomogram_center[1]
-        z_centered_pixels = z_unbinned.values - tomogram_center[2]
+        x_centered_pixels = x_binned.values - tomogram_center[0]
+        y_centered_pixels = y_binned.values - tomogram_center[1]
+        z_centered_pixels = z_binned.values - tomogram_center[2]
         
         # Convert to Angstrom
         x_angstrom = x_centered_pixels * float(pixel_size)
@@ -375,9 +372,9 @@ def dynamo_df_to_relion(df, bin_scalar=8.0, pixel_size=None, tomogram_size=None,
         coord_x_col = 'rlnCoordinateX'
         coord_y_col = 'rlnCoordinateY'
         coord_z_col = 'rlnCoordinateZ'
-        x_out = x_unbinned.values
-        y_out = y_unbinned.values
-        z_out = z_unbinned.values
+        x_out = x_binned.values
+        y_out = y_binned.values
+        z_out = z_binned.values
 
     # Angles ZXZ -> ZYZ
     tdrot = df['tdrot'] if 'tdrot' in df.columns else df[COLUMNS_NAME.get(7, 'tdrot')]
