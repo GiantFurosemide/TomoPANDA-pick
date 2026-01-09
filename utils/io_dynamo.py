@@ -57,6 +57,7 @@ def create_dynamo_table(
     coordinates,
     angles_zyz=None,
     micrograph_names=None,
+    origins=None,
     output_file='particles.tbl'
 ):
     """
@@ -74,6 +75,9 @@ def create_dynamo_table(
         List of tomogram/micrograph names per particle (length N). If None,
         all particles are assigned to tomo id 1. Names are mapped to integer
         tomo ids starting at 1 in first-appearance order.
+    origins : array-like or None, optional
+        Shape (N, 3) with origin shifts dx, dy, dz in pixel units (columns 4-6).
+        If None, initialized to zeros.
     output_file : str, optional
         Path to output Dynamo .tbl file. Defaults to 'particles.tbl'.
 
@@ -127,7 +131,14 @@ def create_dynamo_table(
     # 2: aligned (default 1), 3: averaged (default 0)
     T[:, 1] = 1.0
     T[:, 2] = 0.0
-    # 4-6: dx, dy, dz (defaults 0)
+    # 4-6: dx, dy, dz (origin shifts in pixels)
+    if origins is not None:
+        origins_arr = np.asarray(origins, dtype=float)
+        if origins_arr.shape != (num_particles, 3):
+            raise ValueError('origins must have shape (N, 3) matching coordinates')
+        T[:, 3] = origins_arr[:, 0]  # dx
+        T[:, 4] = origins_arr[:, 1]  # dy
+        T[:, 5] = origins_arr[:, 2]  # dz
     # 7-9: tdrot, tilt, narot (ZXZ, degrees)
     T[:, 6] = tdrot
     T[:, 7] = tilt
@@ -383,6 +394,22 @@ def dynamo_df_to_relion(df, pixel_size=None, tomogram_size=None, output_centered
     angles_zxz = np.stack([tdrot.values, tilt.values, narot.values], axis=1)
     angles_zyz = convert_euler(angles_zxz, src_convention='ZXZ', dst_convention='ZYZ', degrees=True)
 
+    # Get origin shifts from Dynamo table (dx, dy, dz in pixels, columns 4-6)
+    dx = df['dx'] if 'dx' in df.columns else df[COLUMNS_NAME.get(4, 'dx')]
+    dy = df['dy'] if 'dy' in df.columns else df[COLUMNS_NAME.get(5, 'dy')]
+    dz = df['dz'] if 'dz' in df.columns else df[COLUMNS_NAME.get(6, 'dz')]
+    
+    # Convert origin from pixels to Angstrom
+    # If pixel_size is None, use 0.0 as default (should not happen if output_centered=True)
+    if pixel_size is not None:
+        origin_x_angstrom = dx.values * float(pixel_size)
+        origin_y_angstrom = dy.values * float(pixel_size)
+        origin_z_angstrom = dz.values * float(pixel_size)
+    else:
+        origin_x_angstrom = np.zeros_like(dx.values)
+        origin_y_angstrom = np.zeros_like(dy.values)
+        origin_z_angstrom = np.zeros_like(dz.values)
+
     # Micrograph name
     if 'rlnMicrographName' in df.columns:
         print("Using rlnMicrographName column")
@@ -401,9 +428,9 @@ def dynamo_df_to_relion(df, pixel_size=None, tomogram_size=None, output_centered
         'rlnAngleRot': angles_zyz[:, 0],
         'rlnAngleTilt': angles_zyz[:, 1],
         'rlnAnglePsi': angles_zyz[:, 2],
-        'rlnOriginXAngst': 0.0,
-        'rlnOriginYAngst': 0.0,
-        'rlnOriginZAngst': 0.0,
+        'rlnOriginXAngst': origin_x_angstrom,
+        'rlnOriginYAngst': origin_y_angstrom,
+        'rlnOriginZAngst': origin_z_angstrom,
         'rlnMicrographName': names.values
     })
     return out
@@ -578,6 +605,25 @@ def relion_star_to_dynamo_tbl(star_path, pixel_size, tomogram_size=None, bin_sca
         df[angle_psi_col].values
     ], axis=1)
     
+    # Extract origin shifts from RELION star file (in Angstrom)
+    # If columns don't exist, use default value 0.0
+    origin_x_col = 'rlnOriginXAngst'
+    origin_y_col = 'rlnOriginYAngst'
+    origin_z_col = 'rlnOriginZAngst'
+    
+    if origin_x_col in df.columns and origin_y_col in df.columns and origin_z_col in df.columns:
+        origins_angstrom = np.stack([
+            df[origin_x_col].values,
+            df[origin_y_col].values,
+            df[origin_z_col].values
+        ], axis=1)
+        # Convert from Angstrom to pixels
+        origins_pixels = origins_angstrom / float(pixel_size)
+    else:
+        # Default to 0.0 if columns don't exist
+        num_particles = len(df)
+        origins_pixels = np.zeros((num_particles, 3), dtype=float)
+    
     # Extract micrograph names if available
     micrograph_names = None
     if 'rlnMicrographName' in df.columns:
@@ -592,6 +638,7 @@ def relion_star_to_dynamo_tbl(star_path, pixel_size, tomogram_size=None, bin_sca
         coordinates=coords_pixels,
         angles_zyz=angles_zyz,
         micrograph_names=micrograph_names,
+        origins=origins_pixels,
         output_file=output_file
     )
     
