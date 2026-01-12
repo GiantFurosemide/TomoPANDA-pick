@@ -397,11 +397,13 @@ def dynamo_df_to_relion(df, pixel_size=None, tomogram_size=None, output_centered
     dz = df['dz'] if 'dz' in df.columns else df[COLUMNS_NAME.get(6, 'dz')]
     
     # Convert origin from pixels to Angstrom
+    # RELION origin = -Dynamo origin (sign convention difference)
+    # (rlnOriginXAngst, rlnOriginYAngst, rlnOriginZAngst) = (-dx × pixel_size, -dy × pixel_size, -dz × pixel_size)
     # If pixel_size is None, use 0.0 as default (should not happen if output_centered=True)
     if pixel_size is not None:
-        origin_x_angstrom = dx.values * float(pixel_size)
-        origin_y_angstrom = dy.values * float(pixel_size)
-        origin_z_angstrom = dz.values * float(pixel_size)
+        origin_x_angstrom = -dx.values * float(pixel_size)
+        origin_y_angstrom = -dy.values * float(pixel_size)
+        origin_z_angstrom = -dz.values * float(pixel_size)
     else:
         origin_x_angstrom = np.zeros_like(dx.values)
         origin_y_angstrom = np.zeros_like(dy.values)
@@ -602,7 +604,9 @@ def relion_star_to_dynamo_tbl(star_path, pixel_size, tomogram_size=None, output_
             df[origin_z_col].values
         ], axis=1)
         # Convert from Angstrom to pixels
-        origins_pixels = origins_angstrom / float(pixel_size)
+        # RELION origin = -Dynamo origin (sign convention difference)
+        # If rlnOrigin = -dx × pixel_size, then dx = -rlnOrigin / pixel_size
+        origins_pixels = -origins_angstrom / float(pixel_size)
     else:
         # Default to 0.0 if columns don't exist
         num_particles = len(df)
