@@ -82,6 +82,9 @@ zarr>=2.10.0
 # Image processing (from tmp/requirements.txt)
 scikit-image>=0.18.0
 
+# Euler angles conversion
+eulerangles>=0.1.0
+
 # 3D mesh processing (from tmp/requirements.txt)
 open3d>=0.16.0
 

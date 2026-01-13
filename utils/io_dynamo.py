@@ -1,8 +1,8 @@
 import os
 import numpy as np
 import pandas as pd
-from scipy.spatial.transform import Rotation as R
 import starfile
+from .io_eular import convert_euler
 
 COLUMNS_NAME = {
         1: 'tag', 2: 'aligned', 3: 'averaged',
@@ -14,43 +14,6 @@ COLUMNS_NAME = {
         24: 'x', 25: 'y', 26: 'z', 27: 'dshift', 28: 'daxis', 29: 'dnarot', 30: 'dcc',
         31: 'otag', 32: 'npar', 34: 'ref', 35: 'sref'
     }
-
-
-def convert_euler(
-    angles,
-    src_convention='ZYZ',
-    dst_convention='ZXZ',
-    degrees=True
-):
-    """
-    Convert Euler angles between conventions (e.g., ZYZ <-> ZXZ).
-
-    Parameters
-    ----------
-    angles : array-like
-        Shape (N, 3) or (3,) angles.
-    src_convention : str
-        Source Euler convention, e.g. 'ZYZ', 'ZXZ'.
-    dst_convention : str
-        Destination Euler convention.
-    degrees : bool
-        Interpret input and output as degrees when True.
-
-    Returns
-    -------
-    np.ndarray
-        Converted angles with same shape.
-    """
-    arr = np.asarray(angles, dtype=float)
-    single = False
-    if arr.ndim == 1:
-        arr = arr.reshape(1, 3)
-        single = True
-    rot = R.from_euler(src_convention.upper(), arr, degrees=degrees)
-    out = rot.as_euler(dst_convention.upper(), degrees=degrees)
-    if single:
-        return out.reshape(3,)
-    return out
 
 
 def create_dynamo_table(
@@ -100,7 +63,7 @@ def create_dynamo_table(
             raise ValueError('angles_zyz must have shape (N, 3) matching coordinates')
 
     # Convert ZYZ (RELION) -> ZXZ (Dynamo) using reusable converter
-    angles_zxz = convert_euler(angles_zyz_arr, src_convention='ZYZ', dst_convention='ZXZ', degrees=True)
+    angles_zxz = convert_euler(angles_zyz_arr, src_convention='relion', dst_convention='dynamo', degrees=True)
     tdrot = angles_zxz[:, 0]
     tilt = angles_zxz[:, 1]
     narot = angles_zxz[:, 2]
@@ -389,7 +352,7 @@ def dynamo_df_to_relion(df, pixel_size=None, tomogram_size=None, output_centered
     tilt = df['tilt'] if 'tilt' in df.columns else df[COLUMNS_NAME.get(8, 'tilt')]
     narot = df['narot'] if 'narot' in df.columns else df[COLUMNS_NAME.get(9, 'narot')]
     angles_zxz = np.stack([tdrot.values, tilt.values, narot.values], axis=1)
-    angles_zyz = convert_euler(angles_zxz, src_convention='ZXZ', dst_convention='ZYZ', degrees=True)
+    angles_zyz = convert_euler(angles_zxz, src_convention='dynamo', dst_convention='relion', degrees=True)
 
     # Get origin shifts from Dynamo table (dx, dy, dz in pixels, columns 4-6)
     dx = df['dx'] if 'dx' in df.columns else df[COLUMNS_NAME.get(4, 'dx')]
@@ -654,14 +617,16 @@ def save_sorted_vll_by_tomonames(tomo_names:list, vll_df:pd.DataFrame, output_vl
     import os
     mrc_paths = vll_df['tomo_path'].tolist()
     # Build a dictionary mapping from each basename (mrc filename without extension) to its path
-    basename_to_path = {os.path.splitext(os.path.basename(p))[0]: p for p in mrc_paths}
+    basename_to_path = {str(os.path.splitext(os.path.basename(p))[0]): str(p) for p in mrc_paths}
 
     # For each tomo_name, find the first mrc path whose basename contains tomo_name
     sorted_paths = []
     for name in tomo_names:
+        # Convert name to string to handle numeric types (e.g., numpy.int64)
+        name_str = str(name)
         found_path = None
         for bn, p in basename_to_path.items():
-            if name in bn:
+            if name_str in bn:
                 found_path = p
                 break
         if found_path is None:
