@@ -90,3 +90,5 @@ open3d>=0.16.0
 
 # Optional dependencies (commented out in original)
 # gdist>=0.0.0  # SciPy graph-based fallback provided
+jax>=0.3.0
+jaxlib>=0.3.0
