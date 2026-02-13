@@ -2,6 +2,64 @@
 
 ## 使用指南
 
+## Format Conversion Commands / 格式转换命令
+
+### star2tbl: Convert STAR to Dynamo TBL
+
+Convert RELION/Pytom particle STAR files to Dynamo .tbl format, reorganize VLL by tomogram names, and optionally add rlnTomoName for ChimeraX.
+
+将 RELION/Pytom 粒子 STAR 文件转换为 Dynamo .tbl 格式，按 tomogram 名称重排 VLL，并可选添加 rlnTomoName 供 ChimeraX 使用。
+
+```bash
+tomopanda-pick star2tbl --config a.yaml
+```
+
+**Example config** (`config/star2tbl_config_example.yaml`):
+
+```yaml
+input:
+  starfile_particle: "path/to/merged_particles.star"
+  vll_path: "path/to/all_tomograms_bin8.txt"
+
+parameters:
+  pixel_size: 6.72
+  tomogram_size: [999, 999, 499]
+
+output:
+  output_tbl: "path/to/particles_changeTomoName_bin8.tbl"
+  output_vll: "path/to/sorted_tomos_bin8.vll"
+  output_star_with_tomo_name: "path/to/merged_particles_with_tomo_name.star"
+```
+
+### tbl2star: Convert Dynamo TBL/VLL to RELION STAR
+
+Convert Dynamo .tbl and .vll files to RELION .star format.
+
+将 Dynamo .tbl 和 .vll 文件转换为 RELION .star 格式。
+
+```bash
+tomopanda-pick tbl2star --config b.yaml
+```
+
+**Example config** (`config/tbl2star_config_example.yaml`):
+
+```yaml
+input:
+  input_tbl: "path/to/input.tbl"
+  input_vll: "path/to/input.vll"
+
+parameters:
+  pixel_size: 6.72
+  tomogram_size: [999, 999, 499]
+  output_centered: true
+
+output:
+  output_star: "path/to/output.star"
+  output_star_with_tomo_name: "path/to/output_tomo_name.star"
+```
+
+---
+
 ## Quick Start
 
 ## 快速开始

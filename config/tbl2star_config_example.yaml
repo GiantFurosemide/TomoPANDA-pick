@@ -1,0 +1,22 @@
+# tbl2star: Convert Dynamo TBL/VLL files to RELION STAR format
+# Usage: tomopanda-pick tbl2star --config tbl2star_config_example.yaml
+
+input:
+  # Input Dynamo .tbl file
+  input_tbl: "path/to/input.tbl"
+  # Input Dynamo .vll file (tomogram path list)
+  input_vll: "path/to/input.vll"
+
+parameters:
+  # Pixel size in Angstrom
+  pixel_size: 6.72
+  # Tomogram dimensions (x, y, z) in pixels (required for centered coordinates)
+  tomogram_size: [999, 999, 499]
+  # Output centered coordinates (rlnCenteredCoordinateXAngst, etc.)
+  output_centered: true
+
+output:
+  # Output RELION .star file
+  output_star: "path/to/output.star"
+  # Output STAR with rlnTomoName column (optional, null to skip)
+  output_star_with_tomo_name: "path/to/output_tomo_name.star"

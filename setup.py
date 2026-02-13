@@ -63,6 +63,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
+            "tomopanda-pick=scripts.cli:main",
             "tomopanda-train=scripts.train:main",
             # Uncomment when other scripts are created:
             # "tomopanda-eval=scripts.evaluate:main",

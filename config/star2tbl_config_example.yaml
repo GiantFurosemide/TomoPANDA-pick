@@ -1,0 +1,22 @@
+# star2tbl: Convert RELION/Pytom STAR file to Dynamo TBL format
+# Usage: tomopanda-pick star2tbl --config star2tbl_config_example.yaml
+
+input:
+  # RELION/Pytom particle STAR file
+  starfile_particle: "path/to/merged_particles.star"
+  # VLL file: one tomogram path per line (absolute paths for Dynamo)
+  vll_path: "path/to/all_tomograms_bin8.txt"
+
+parameters:
+  # Pixel size in Angstrom
+  pixel_size: 6.72
+  # Tomogram dimensions (x, y, z) in pixels
+  tomogram_size: [999, 999, 499]
+
+output:
+  # Output Dynamo .tbl file
+  output_tbl: "path/to/particles_changeTomoName_bin8.tbl"
+  # Output sorted .vll file (reordered by tomogram names in star file)
+  output_vll: "path/to/sorted_tomos_bin8.vll"
+  # Output STAR file with rlnTomoName column (optional, for ChimeraX)
+  output_star_with_tomo_name: "path/to/merged_particles_with_tomo_name.star"

@@ -1,0 +1,3 @@
+[console_scripts]
+tomopanda-pick = scripts.cli:main
+tomopanda-train = scripts.train:main
